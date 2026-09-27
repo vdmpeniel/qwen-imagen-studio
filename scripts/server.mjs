@@ -113,7 +113,7 @@ const server = createServer(async (req,res) => {
       if (active || deleting) return json(res,409,{error:'Espera a que termine la operación en curso.'});
       const params = validate(await readBody(req));
       if (active || deleting) return json(res,409,{error:'Espera a que termine la operación en curso.'});
-      if(!manager&&params.compute!=='auto')return json(res,400,{error:'Este servidor usa un motor externo. Usa "Iniciar Qwen Imagen Studio.cmd" para seleccionar CPU/GPU.'});
+      if(!manager&&params.compute!=='auto')return json(res,400,{error:'Este servidor usa un motor externo. Usa "./iniciar.sh" para seleccionar CPU/GPU.'});
       if(manager){chooseMode(params.compute,await manager.detection);if(active||deleting)return json(res,409,{error:'Espera a que termine la operación en curso.'});}
       const job = { id:randomUUID(), params, status:'queued', startedAt:Date.now(), current:0, total:params.count, images:[], seed:params.seed, message:'Preparando el motor local…', cancelRequested:false };
       active = job; jobs.set(job.id,job);

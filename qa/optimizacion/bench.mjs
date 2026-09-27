@@ -15,7 +15,8 @@ const base = ['--diffusion-model', `${root}/models/${process.env.DM || MODEL.bas
 const logFile = resolve(out, `${name}.log`);
 const fd = openSync(logFile, 'w');
 const t0 = Date.now();
-const child = spawn(`${root}/${runtime}/sd-server.exe`, [...base, ...extra], { cwd: root, windowsHide: true, stdio: ['ignore', fd, fd] });
+const exe = process.platform === 'win32' ? `${root}/${runtime}/sd-server.exe` : `${root}/${runtime}/sd-server`;
+const child = spawn(exe, [...base, ...extra], { cwd: root, ...(process.platform === 'win32' ? { windowsHide: true } : {}), stdio: ['ignore', fd, fd] });
 closeSync(fd);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let peakVram = 0;

@@ -59,8 +59,8 @@ export class EngineManager {
   constructor(port){this.port=port;this.child=null;this.current=null;this.loading=false;this.error=null;this.hardware=null;this.queue=Promise.resolve();this.detection=this.detect();}
   async detect(){
     const runs=await Promise.all([MODEL.runtimeCpu,MODEL.runtime,MODEL.runtimeVulkan].filter(Boolean).map(async runtime=>{
-      const exe=resolve(root,runtime,'sd-server.exe');if(!existsSync(exe))return [];
-      try{const {stdout}=await exec(exe,['--list-devices'],{windowsHide:true,timeout:20000,maxBuffer:1024*1024});return parseDevices(stdout,runtime);}catch{return [];}
+      const exe=resolve(root,runtime,'sd-server');if(!existsSync(exe))return [];
+      try{const {stdout}=await exec(exe,['--list-devices'],{timeout:20000,maxBuffer:1024*1024});return parseDevices(stdout,runtime);}catch{return [];}
     }));
     const all=runs.flat(), seen=new Set();
     const gpus=all.filter(d=>!d.cpu).map(d=>({...d,integrated:!DEDICATED.test(d.name)})).sort((a,b)=>{
@@ -84,10 +84,10 @@ export class EngineManager {
     try{
       await this.stop();
       await assertPortFree(this.port);
-      const exe=resolve(root,selection.runtime,'sd-server.exe'), args=[...engineArgs(selection,threads,this.port,features),'--eager-load'];
+      const exe=resolve(root,selection.runtime,'sd-server'), args=[...engineArgs(selection,threads,this.port,features),'--eager-load'];
       await appendFile(resolve(root,'logs/engine.out.log'),`\n[Qwen Studio ${new Date().toISOString()}] mode=${selection.mode} backend=${selection.backend} threads=${threads} runtime=${selection.runtime} features=${JSON.stringify(features)}\n`);
       const out=openSync(resolve(root,'logs/engine.out.log'),'a'),err=openSync(resolve(root,'logs/engine.err.log'),'a');
-      const child=spawn(exe,args,{cwd:root,windowsHide:true,stdio:['ignore',out,err]});closeSync(out);closeSync(err);this.child=child;
+      const child=spawn(exe,args,{cwd:root,stdio:['ignore',out,err]});closeSync(out);closeSync(err);this.child=child;
       let failure;child.on('error',e=>{failure=e;this.error=e.message;});
       await new Promise((ok,bad)=>{child.once('spawn',ok);child.once('error',bad);});
       await writeFile(resolve(root,'logs/engine.pid'),String(child.pid));

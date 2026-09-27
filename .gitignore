@@ -6,7 +6,7 @@
 !/README.md
 !/LICENSE
 !/model-config.json
-!/*.cmd
+!/*.sh
 !/app/
 !/scripts/
 !/docs/

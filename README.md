@@ -1,4 +1,6 @@
-# Qwen Imagen Studio
+# Qwen Imagen Studio — rama Linux
+
+> Esta rama (`linux-based`) es el port a **Linux** de la versión Windows. Los scripts `.cmd`/`.ps1` se sustituyen por `.sh`; el resto de la app es idéntico.
 
 **Crea y edita imágenes con IA en tu propio PC, con CPU, GPU o ambas.** Estudio web local en español para [Qwen-Image 2.1](https://huggingface.co/leejet/Qwen-Image-2.1-GGUF) con la aceleración [Viggle Turbo v0.2.1](https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo): una imagen de 1024 × 1024 en unos 18 segundos con una GPU de 8 GB, sin cuentas, sin créditos y sin enviar nada a la nube.
 
@@ -11,7 +13,7 @@
 - **Todo local y privado:** los prompts, referencias e imágenes no salen del equipo. Internet solo se usa durante la instalación.
 - Formatos 1:1, 16:9, 9:16, 4:3 o tamaño libre de 256 a 2048 px; lotes de 1 a 8 imágenes; semillas reproducibles; fondo transparente.
 - **Biblioteca local** con cada imagen y sus parámetros (PNG + JSON), reutilización de ajustes, descarga y borrado con papelera.
-- Instalador que **descarga y verifica automáticamente** todo lo necesario: motores, modelos, Node.js y el runtime de Visual C++.
+- Instalador que **descarga y verifica automáticamente** todo lo necesario: motores, modelos y Node.js.
 - Tema claro y oscuro; interfaz adaptada a móvil.
 
 ## Capturas
@@ -28,41 +30,46 @@
 
 | | Mínimo | Recomendado |
 | --- | --- | --- |
-| Sistema | Windows 10 u 11 de 64 bits | Windows 11 |
-| RAM | 16 GB (cierra otras aplicaciones pesadas) | 32 GB (equipo en el que se probó) |
+| Sistema | Linux de 64 bits (probado en Mint 22.3 / Ubuntu 24.04) | Ubuntu 24.04 |
+| RAM | 16 GB (cierra otras aplicaciones pesadas) | 32 GB (equipo en el que se probó la versión Windows) |
 | Disco libre | 25 GB durante la instalación (13 GB al terminar) | SSD |
 | GPU | Opcional | NVIDIA con 8 GB de VRAM o más |
 | Internet | Solo para instalar (hasta 17 GB de descarga) | — |
 
-No necesitas instalar Python, Node.js, CUDA ni ninguna otra herramienta: el instalador se encarga. Para GPU NVIDIA basta con tener el controlador de NVIDIA actualizado; para AMD/Intel, su controlador con soporte Vulkan.
+No necesitas instalar Python ni Node.js: el instalador usa tu Node.js 22+ o descarga una copia portátil dentro de la carpeta de la app (no toca tu sistema). Dependencias del sistema: `curl unzip libgomp1 libvulkan1` (`sudo apt install -y curl unzip libgomp1 libvulkan1`). Para GPU NVIDIA basta con tener el controlador actualizado; AMD/Intel usan Vulkan. **CUDA nativo** en Linux requiere compilar el motor (ver abajo); sin compilar, las NVIDIA funcionan por **Vulkan** (sin SageAttention, ~12 % más lento que CUDA).
 
 ## Instalación paso a paso
 
-1. **Descarga la app.** En esta página pulsa **Code → Download ZIP** y descomprímelo en una carpeta con al menos 25 GB libres, por ejemplo `D:\Programas\qwen-imagen-studio`. También puedes clonarla:
-   ```powershell
-   git clone https://github.com/jceronch1/qwen-imagen-studio.git
+1. **Descarga la app.** Clona esta rama en una carpeta con al menos 25 GB libres:
+   ```bash
+   git clone --branch linux-based https://github.com/jceronch1/qwen-imagen-studio.git
+   cd qwen-imagen-studio
    ```
-   Evita carpetas sincronizadas con OneDrive o similares: los modelos son archivos muy grandes.
+   Evita carpetas sincronizadas con servicios en la nube: los modelos son archivos muy grandes.
 
-2. **Ejecuta el instalador.** Haz doble clic en **`Instalar Qwen Imagen Studio.cmd`**.
-   - Si Windows muestra *«Windows protegió su PC»*, pulsa **Más información → Ejecutar de todas formas** (ocurre con cualquier script descargado de Internet).
-   - En un PC **sin tarjeta gráfica** puedes usar **`Instalar solo CPU.cmd`**, que omite los motores de GPU.
+2. **Ejecuta el instalador.**
+   ```bash
+   ./instalar.sh
+   ```
+   - En un equipo **sin tarjeta gráfica** puedes usar **`./instalar-solo-cpu.sh`**, que omite los motores de GPU.
+   - Opciones: `./instalar.sh --backend auto|cpu|cuda|vulkan` y `--no-merge` para omitir la fusión del LoRA.
+   - `--backend cuda` (o `auto` con NVIDIA detectada) intenta **compilar** `sd-server` con CUDA (`scripts/build-cuda.sh`, necesita `git cmake nvidia-cuda-toolkit`). No hay binario CUDA precompilado en Linux para esta revisión; si la compilación falla, se usa Vulkan automáticamente. **Vía no probada en este equipo (sin NVIDIA).**
 
 3. **Deja que termine.** El instalador muestra cada paso. Descarga solo lo que falta y verifica cada archivo con su SHA256 oficial; si se corta Internet, vuelve a ejecutarlo y continúa donde se quedó.
 
    | Paso | Qué hace | Tamaño |
    | --- | --- | ---: |
-   | Node.js | Si no tienes Node.js 22 o posterior, descarga una copia portátil dentro de la carpeta de la app (no toca tu sistema) | 37 MB |
-   | Visual C++ | Si falta el runtime de Visual C++ 2015‑2022, lo instala. Windows pedirá **permiso de administrador** una vez | 25 MB |
-   | Motores | `stable-diffusion.cpp` para CPU y Vulkan, y CUDA si detecta una GPU NVIDIA | 0,05–0,95 GB |
+   | Node.js | Si no tienes Node.js 22 o posterior, descarga una copia portátil (`node-*-linux-x64.tar.xz`) dentro de la carpeta de la app | 37 MB |
+   | Dependencias | Comprueba `curl unzip libgomp1 libvulkan1` e indica el `apt install` si faltan | — |
+   | Motores | `stable-diffusion.cpp` Linux para CPU y Vulkan; CUDA se compila bajo demanda si hay GPU NVIDIA | 0,05–0,95 GB |
    | Modelos | Codificador de texto Qwen3‑VL 8B, lector de imágenes de referencia y VAE | 6,9 GB |
    | Modelo de imagen | Descarga la base oficial Qwen-Image 2.1 (Q8_0) y el LoRA Viggle Turbo, los fusiona en un modelo optimizado de 4,2 GB y **borra los temporales** | 9,1 GB temporales |
 
    La fusión del paso final se calcula en tu CPU: unos 8 minutos en un procesador de 16 hilos, más en equipos modestos. Al terminar verás **«Instalacion completa con el modelo optimizado»**.
 
-4. **Abre el estudio.** Haz doble clic en **`Iniciar Qwen Imagen Studio.cmd`**. Se abre el navegador en http://127.0.0.1:7871 y los modelos se cargan en segundo plano (indicador **Cargando modelos…**, unos 10 s con GPU). Mientras tanto ya puedes escribir tu primera idea.
+4. **Abre el estudio.** `./iniciar.sh`. Se abre el navegador en http://127.0.0.1:7871 y los modelos se cargan en segundo plano (indicador **Cargando modelos…**, unos 10 s con GPU). Mientras tanto ya puedes escribir tu primera idea.
 
-5. **Para cerrarlo**, usa **`Detener Qwen Imagen Studio.cmd`**: cierra la app y libera la memoria. Tus imágenes quedan guardadas en la carpeta `outputs`.
+5. **Para cerrarlo**, usa **`./detener.sh`**: cierra la app y libera la memoria. Tus imágenes quedan guardadas en la carpeta `outputs`.
 
 > Si el cálculo de la fusión no puede completarse, el instalador instala automáticamente el **modo compatible** (la misma calidad, aplicando el LoRA durante la generación, algo más lento). Puedes volver a ejecutar el instalador más tarde para crear el modelo optimizado.
 
@@ -108,18 +115,18 @@ Los detalles de cada optimización y cómo se midieron están en [docs/TECNICO.m
 | Síntoma | Solución |
 | --- | --- |
 | «Descarga interrumpida» durante la instalación | Vuelve a ejecutar el instalador: reanuda la descarga. |
-| «Falta …. Ejecuta Instalar Qwen Imagen Studio.cmd» al iniciar | La instalación no terminó; ejecuta de nuevo el instalador. |
+| «Falta …. Ejecuta ./instalar.sh» al iniciar | La instalación no terminó; ejecuta de nuevo el instalador. |
 | «La GPU no tuvo memoria suficiente» | Usa un tamaño menor, el modo **CPU + GPU** o **CPU**, y cierra otros programas que usen la GPU. |
 | «No quedó suficiente memoria RAM» | Cierra aplicaciones pesadas o reduce el tamaño de la imagen. |
-| No aparece mi GPU | Actualiza el controlador (NVIDIA, AMD o Intel) y vuelve a abrir la app. |
-| El puerto 7871 está ocupado | Cierra la otra instancia con `Detener Qwen Imagen Studio.cmd`. |
+| No aparece mi GPU | Actualiza el controlador (NVIDIA, AMD o Intel), instala `libvulkan1` y vuelve a abrir la app. |
+| El puerto 7871 está ocupado | Cierra la otra instancia con `./detener.sh`. |
 
 Los registros están en la carpeta `logs/` (`engine.err.log`, `engine.out.log`, `app.err.log`).
 
 ## Actualizar o desinstalar
 
 - **Actualizar:** descarga la nueva versión encima de la carpeta (o `git pull`) y ejecuta de nuevo el instalador; solo descarga lo que haya cambiado.
-- **Desinstalar:** ejecuta `Detener Qwen Imagen Studio.cmd` y borra la carpeta. Guarda antes tus imágenes de `outputs/` si las quieres conservar. La app no escribe fuera de su carpeta (salvo el runtime de Visual C++, si lo instaló).
+- **Desinstalar:** ejecuta `./detener.sh` y borra la carpeta. Guarda antes tus imágenes de `outputs/` si las quieres conservar. La app no escribe fuera de su carpeta.
 
 ## Estructura del proyecto
 
@@ -130,7 +137,7 @@ docs/                 Documentación técnica y capturas
 qa/optimizacion/      Mediciones usadas para elegir la configuración del motor
 models/               Licencia y aviso de los modelos (los pesos los descarga el instalador)
 model-config.json     Versiones, revisiones y hashes fijados de los modelos
-*.cmd                 Instalar, iniciar y detener con doble clic
+*.sh                  Instalar, iniciar y detener desde la terminal
 ```
 
 Carpetas creadas por el instalador y la app (no forman parte del repositorio): `models/` (pesos), `runtime-*` (motores), `node/`, `outputs/`, `logs/` y `.downloads/`.
