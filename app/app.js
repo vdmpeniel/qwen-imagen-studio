@@ -138,7 +138,7 @@ document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Ente
 async function status() {let loading=false;try{const s=await api('/api/status');state.ready=s.ready;loading=!!s.compute?.loading;
 if(s.compute?.hardware){const h=s.compute.hardware,first=!state.hardware;state.hardware=h;$('#hardwareInfo').textContent=h.cpuName+' · '+h.logicalCores+' hilos · '+h.ramGB+' GB RAM. '+(h.gpus.length?'GPU: '+h.gpus.map(g=>g.name+(g.integrated?' (integrada)':'')).join(', '):'Sin GPU compatible detectada. Puedes generar con CPU.');for(const o of $('#compute').options)o.disabled=!h.modes.includes(o.value);
 $('#fastAttention').closest('label').hidden=!h.gpus.some(g=>/^cuda/i.test(g.id));
-$('#engineInfo').textContent='Viggle Turbo v0.2.1 · modelo base Q4_K + LoRA r256 '+(h.merged?'fusionado en los pesos (más rápido y con menos VRAM).':'aplicado en tiempo de ejecución. Ejecuta el instalador para fusionarlo y acelerar la generación.')+' Euler con el planificador Turbo, CFG 1 y sin prompt negativo, como requiere este modelo.';
+$('#engineInfo').textContent=s.model+' · '+(s.loraApplication==='merged'?'LoRA fusionado en los pesos (más rápido y con menos VRAM).':s.loraApplication==='runtime'?'LoRA aplicado en tiempo de ejecución.':'')+' Euler con el planificador Turbo, CFG 1 y sin prompt negativo, como requiere este modelo.';
 if(first)warmEngine();}
 const current=s.compute?.current;$('#status').classList.toggle('ready',s.ready&&!loading);$('#status').lastChild.textContent=s.ready?(loading?' Cargando modelos…':current?' Motor listo · '+({cpu:'CPU',gpu:'GPU',hybrid:'CPU + GPU'}[current.mode]):' Listo para generar'):' Detectando / desconectado';if(s.active&&!state.job){showJob(s.active);void followJob(s.active.id);}}catch{state.ready=false;$('#status').classList.remove('ready');$('#status').lastChild.textContent=' Servidor desconectado';}refreshForm();setTimeout(status,loading?1500:5000);}
 
@@ -163,3 +163,160 @@ document.addEventListener('click',e=>{if(!e.target.closest('.number-combo'))clos
 try{if(localStorage.getItem('turbo.theme')==='dark')document.body.classList.add('dark');const saved=JSON.parse(localStorage.getItem('turbo.settings')||'null');if(saved)setSettings(saved);}catch{}
 try{if(localStorage.getItem('turbo.modelVersion')!=='0.2.1'){$('#steps').value=6;localStorage.setItem('turbo.modelVersion','0.2.1');}}catch{}
 refreshForm();loadGallery().catch(e=>notice(e.message,true));status();
+
+/* ---------------- Model manager ---------------- */
+const models={open:false,data:null,draft:null,dirty:false,applying:false,confirm:null,hadPending:false,timer:null};
+const sizeLabel=bytes=>bytes==null?'—':bytes>=1024**3?(bytes/1024**3).toFixed(2)+' GB':Math.max(1,Math.round(bytes/1024**2))+' MB';
+const downloadStateLabel={queued:'En cola',downloading:'Descargando',verifying:'Verificando',converting:'Convirtiendo LoRA',done:'Instalado',cancelled:'Cancelada',error:'Error'};
+function modelMessage(text,error=false){const box=$('#modelsNotice');box.hidden=!text;box.textContent=text||'';box.classList.toggle('error',!!error);}
+function modelBadge(text,kind=''){const span=document.createElement('span');span.className='model-badge'+(kind?' '+kind:'');span.textContent=text;return span;}
+function draftItem(role){return models.data&&models.draft?models.data.items.find(item=>item.id===models.draft[role])||null:null;}
+function draftRequired(){
+  if(!models.draft)return [];
+  return [draftItem('textEncoder'),draftItem('mmproj'),draftItem('vae'),draftItem('diffusion')].filter(Boolean).concat(draftItem('diffusion')?.kind==='merged'?[]:[draftItem('lora')].filter(Boolean));
+}
+function modelActionButton(label,variant,onclick,disabled=false){const b=document.createElement('button');b.type='button';b.className=variant;b.textContent=label;b.disabled=disabled;b.onclick=onclick;return b;}
+function renderModels(){
+  const data=models.data,body=$('#modelsBody');if(!data)return;
+  body.replaceChildren();
+  const pending=!!data.pending,locked=models.applying||(pending&&!!data.downloading);
+  for(const role of data.roles){
+    const group=document.createElement('section');group.className='models-group';
+    const head=document.createElement('div');head.className='models-group-head';
+    const title=document.createElement('h3');title.textContent=role.label;
+    const hint=document.createElement('p');hint.className='hint';hint.textContent=role.hint;
+    head.append(title,hint);group.append(head);
+    if(role.id==='lora'&&draftItem('diffusion')?.kind==='merged'){
+      const note=document.createElement('p');note.className='models-note';note.textContent='El modelo de difusión elegido ya lleva el LoRA fusionado, así que esta pieza no se aplica.';group.append(note);
+    }
+    for(const item of data.items.filter(entry=>entry.role===role.id))group.append(modelRow(item,role,locked));
+    body.append(group);
+  }
+  renderModelsFooter();
+}
+function modelRow(item,role,locked){
+  const chosen=models.draft?.[role.id]===item.id,state=item.state;
+  const row=document.createElement('div');row.className='model-row'+(chosen?' chosen':'')+(item.installed?'':' missing')+(item.active?' is-active':'');
+  const radio=document.createElement('input');radio.type='radio';radio.className='model-radio';radio.name='model-'+role.id;radio.value=item.id;radio.checked=chosen;
+  radio.setAttribute('aria-label','Usar '+item.label);
+  radio.disabled=locked||!models.draft||(!item.installed&&!item.downloadable)||(role.id==='lora'&&draftItem('diffusion')?.kind==='merged');
+  radio.onchange=()=>{if(!models.draft)return;models.draft[role.id]=item.id;models.dirty=true;models.confirm=null;renderModels();};
+  const info=document.createElement('div');info.className='model-info';
+  const name=document.createElement('div');name.className='model-name';const strong=document.createElement('strong');strong.textContent=item.label;name.append(strong);
+  if(item.active)name.append(modelBadge('Activa','active'));
+  if(item.installed)name.append(modelBadge('Instalada'));
+  if(item.local)name.append(modelBadge('Local'));
+  if(!item.installed&&!item.downloadable)name.append(modelBadge('No descargable','warn'));
+  const detail=document.createElement('small');detail.textContent=item.detail;info.append(name,detail);
+  if(state&&['queued','downloading','verifying','converting','error'].includes(state.state)){
+    const line=document.createElement('div');line.className='model-progress-line';
+    const text=document.createElement('span');text.textContent=downloadStateLabel[state.state]+(state.state==='downloading'&&state.total?' · '+sizeLabel(state.received)+' de '+sizeLabel(state.total):'');
+    line.append(text);
+    const bar=document.createElement('div');bar.className='model-progress'+(state.state==='error'?' error':'');
+    const fill=document.createElement('i');fill.style.width=state.total?Math.min(100,Math.round(state.received/state.total*100))+'%':'0%';bar.append(fill);line.append(bar);
+    if(state.error){const err=document.createElement('small');err.className='model-error';err.textContent=state.error;line.append(err);}
+    info.append(line);
+  }
+  const size=document.createElement('span');size.className='model-size';size.textContent=sizeLabel(item.bytes);
+  const actions=document.createElement('div');actions.className='model-actions';
+  if(models.confirm===item.id){
+    const question=document.createElement('span');question.className='model-confirm-text';question.textContent=item.local?'¿Borrar el fusionado y su prueba?':'¿Borrar del disco?';
+    actions.append(question,modelActionButton('Sí, borrar','secondary danger',()=>deleteModel(item)),modelActionButton('No','secondary',()=>{models.confirm=null;renderModels();}));
+  }else if(state&&['queued','downloading'].includes(state.state)){
+    actions.append(modelActionButton('Cancelar descarga','secondary',()=>cancelModel(item)));
+  }else if(state&&['verifying','converting'].includes(state.state)){
+    actions.append(modelActionButton('Verificando…','secondary',()=>{},true));
+  }else if(!item.installed&&item.downloadable){
+    actions.append(modelActionButton('Descargar','secondary',()=>downloadModel(item),!item.canDownload));
+  }else if(item.installed&&!item.active&&item.canDelete&&!chosen){
+    actions.append(modelActionButton('Borrar','secondary danger',()=>{models.confirm=item.id;renderModels();}));
+  }
+  row.append(radio,info,size,actions);return row;
+}
+function renderModelsFooter(){
+  const data=models.data;if(!data)return;
+  const required=draftRequired(),missing=required.filter(item=>!item.installed);
+  const total=required.reduce((sum,item)=>sum+item.bytes,0),missingBytes=missing.reduce((sum,item)=>sum+item.bytes,0);
+  const disk=data.disk?` · ${sizeLabel(data.disk.freeBytes)} libres en disco`:'';
+  $('#modelsDisk').textContent=data.ramGB?`${data.ramGB} GB de RAM${disk}`:disk.replace(/^ · /,'');
+  $('#modelsSummary').textContent=`Configuración: ${sizeLabel(total)}${missing.length?` · ${missing.length} archivo(s) por descargar (${sizeLabel(missingBytes)})`:' · todo instalado'}${disk}`;
+  const apply=$('#modelsApply'),blocked=!!data.jobActive||!!data.downloading;
+  apply.textContent=missing.length?`Descargar y aplicar (${sizeLabel(missingBytes)})`:'Aplicar cambios';
+  apply.disabled=!models.draft||models.applying||(!models.dirty&&!data.pending)||blocked;
+  apply.classList.toggle('busy',models.applying);
+  $('#modelsCancel').textContent=models.dirty?'Descartar cambios':'Cerrar';
+}
+async function refreshModels(){
+  try{
+    const data=await api('/api/models');models.data=data;
+    if(!models.dirty&&!models.applying)models.draft=data.pending?{...data.pending}:{...data.selection};
+    if(data.pending)models.hadPending=true;
+    else if(models.hadPending){
+      models.hadPending=false;models.dirty=false;models.draft={...data.selection};
+      if(models.open)modelMessage('Modelos verificados. La nueva configuración está activa y el motor se ha recargado.');
+      warmedKey=null;
+    }
+    if(models.open)renderModels();
+  }catch(error){if(models.open)modelMessage(error.message,true);}
+}
+function scheduleModelPoll(delay=1500){
+  clearTimeout(models.timer);
+  models.timer=setTimeout(async()=>{
+    if(!models.open)return;
+    await refreshModels();
+    const busy=models.data?.downloading||models.data?.pending||models.applying;
+    scheduleModelPoll(busy?1200:5000);
+  },delay);
+}
+async function openModels(){
+  if(models.open)return;
+  models.open=true;models.dirty=false;models.confirm=null;models.hadPending=false;modelMessage('');
+  const dialog=$('#modelsDialog');
+  if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');
+  $('#modelsBody').replaceChildren(Object.assign(document.createElement('p'),{className:'hint',textContent:'Cargando el catálogo de modelos…'}));
+  await refreshModels();
+  scheduleModelPoll(1200);
+}
+function closeModels(){
+  if(models.applying)return;
+  models.open=false;clearTimeout(models.timer);models.dirty=false;models.confirm=null;
+  const dialog=$('#modelsDialog');
+  if(dialog.open)dialog.close();else dialog.removeAttribute('open');
+}
+async function downloadModel(item){
+  try{await api('/api/models/download',{method:'POST',body:JSON.stringify({id:item.id})});modelMessage(`Descargando ${item.short}. Puedes seguir usando la app; continuará en segundo plano.`);await refreshModels();scheduleModelPoll(600);}
+  catch(error){modelMessage(error.message,true);}
+}
+async function cancelModel(item){
+  try{await api('/api/models/cancel',{method:'POST',body:JSON.stringify({id:item.id})});modelMessage(`Descarga de ${item.short} cancelada. El archivo parcial se conserva para reanudarla.`);await refreshModels();}
+  catch(error){modelMessage(error.message,true);}
+}
+async function deleteModel(item){
+  try{await api('/api/models/delete',{method:'POST',body:JSON.stringify({id:item.id})});models.confirm=null;modelMessage(`${item.short} se borró del disco.`);await refreshModels();}
+  catch(error){modelMessage(error.message,true);}
+}
+async function applyModels(){
+  if(!models.draft||models.applying)return;
+  models.applying=true;models.confirm=null;modelMessage('Comprobando la configuración…');renderModels();
+  try{
+    const result=await api('/api/models/select',{method:'POST',body:JSON.stringify({selection:models.draft})});
+    if(result.pending){
+      models.dirty=false;models.hadPending=true;
+      modelMessage(`Descargando ${result.downloads.length} archivo(s). Se aplicará automáticamente cuando todos verifiquen; puedes cerrar esta ventana.`);
+    }else{
+      models.dirty=false;models.draft={...result.selection};warmedKey=null;
+      modelMessage(result.restarted?'Configuración aplicada. El motor se está recargando con los nuevos modelos.':'Configuración aplicada.');
+      if(!result.restarted)warmEngine();
+      await refreshModels();
+    }
+  }catch(error){modelMessage(error.message,true);}
+  finally{models.applying=false;renderModels();scheduleModelPoll(800);}
+}
+$('#models').onclick=openModels;
+$('#modelsClose').onclick=closeModels;
+$('#modelsCancel').onclick=closeModels;
+$('#modelsApply').onclick=applyModels;
+$('#modelsDialog').addEventListener('close',()=>{models.open=false;clearTimeout(models.timer);models.dirty=false;models.confirm=null;});
+$('#modelsDialog').addEventListener('cancel',event=>{if(models.applying)event.preventDefault();});
+$('#modelsDialog').addEventListener('click',event=>{if(event.target===$('#modelsDialog'))closeModels();});
+

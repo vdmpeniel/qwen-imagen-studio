@@ -1,10 +1,17 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdir, readdir, rename, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, rename, unlink, statfs } from 'node:fs/promises';
 import { resolve, basename, extname } from 'node:path';
+import { totalmem } from 'node:os';
 import { validate, enginePayload, MODEL } from './core.mjs';
 import { EngineManager, chooseMode } from './engine-manager.mjs';
 import { logOffset, recentLog, diagnoseFailure } from './engine-diagnostics.mjs';
+import {
+  CATALOG, ROLES, getItem, isInstalled, installedCount, downloadUrl,
+  readSelection, readPending, saveSelection, savePending, clearPending,
+  missingRequired, normalizeSelection, tryResolveActive, itemPath, runtimeLoraPath, loraProofPath
+} from './model-selection.mjs';
+import { ModelDownloader } from './model-downloader.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const port = Number(process.env.QWEN_PORT || 7871), enginePort = Number(process.env.QWEN_ENGINE_PORT || 7872);
@@ -14,8 +21,87 @@ await mkdir(outputs, { recursive: true });
 const manager = process.env.QWEN_ENGINE_MANAGED === '1' ? new EngineManager(enginePort) : null;
 let active = null;
 let deleting = false;
+let lastApplied = null;
+let applying = false;
 const jobs = new Map();
 const pause = ms => new Promise(r => setTimeout(r, ms));
+
+// The selection is only promoted once every required file has verified on disk.
+async function applyPendingSelection() {
+  if (applying) return;
+  // Never reload the engine in the middle of a generation; retry when the job ends.
+  if (active) return;
+  const pending = readPending();
+  if (!pending || missingRequired(pending).length) return;
+  applying = true;
+  try {
+    const changed = JSON.stringify(readSelection()) !== JSON.stringify(pending);
+    await saveSelection(pending);
+    await clearPending();
+    lastApplied = { at: Date.now(), selection: pending };
+    if (changed && manager) {
+      const last = manager.lastRequest;
+      await manager.stop();
+      if (last) void manager.warm(last.requested, last.threads, last.fastAttention);
+    }
+  } finally { applying = false; }
+}
+const downloader = new ModelDownloader({ onIdle: applyPendingSelection });
+void applyPendingSelection();
+
+async function diskInfo() {
+  try {
+    const s = await statfs(root);
+    return { freeBytes: Number(s.bavail) * Number(s.bsize), totalBytes: Number(s.blocks) * Number(s.bsize) };
+  } catch { return null; }
+}
+
+function modelItem(item) {
+  return {
+    id: item.id, role: item.role, label: item.label, short: item.short, detail: item.detail || '',
+    kind: item.kind || null, quant: item.quant || null, rank: item.rank || null,
+    bytes: item.bytes, local: !!item.local, downloadable: !!downloadUrl(item)
+  };
+}
+
+async function modelsPayload() {
+  const selection = readSelection(), pending = readPending(), disk = await diskInfo();
+  const busylock = !!active || deleting;
+  const items = CATALOG.items.map(item => {
+    const installed = isInstalled(item);
+    const isActive = selection[item.role] === item.id;
+    return {
+      ...modelItem(item),
+      installed,
+      active: isActive,
+      canDownload: !installed && !!downloadUrl(item) && !busylock,
+      canDelete: installed && !isActive && installedCount(item.role) > 1 && !busylock && !downloader.busy,
+      state: downloader.stateOf(item.id)
+    };
+  });
+  return {
+    roles: ROLES, items, selection, pending,
+    merged: getItem(selection.diffusion).kind === 'merged',
+    busy: busylock || downloader.busy,
+    jobActive: !!active,
+    downloading: downloader.busy,
+    disk, ramGB: Math.round(totalmem() / 1024 ** 3),
+    lastApplied
+  };
+}
+
+async function deleteItemFiles(item) {
+  const targets = [];
+  if (item.role === 'lora') targets.push(runtimeLoraPath(item), loraProofPath(item), itemPath(item));
+  else if (item.local) targets.push(itemPath(item), resolve(root, 'models/merged-lora.json'));
+  else targets.push(itemPath(item));
+  for (const target of targets) {
+    await unlink(target).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await unlink(target + '.part').catch(error => { if (error.code !== 'ENOENT') throw error; });
+  }
+  return targets.length;
+}
+
 async function engineRequest(path, body) {
   const r = await fetch(engine + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
   const data = await r.json();
@@ -32,6 +118,7 @@ async function run(job) {
       selected=await manager.ensure(job.params.compute,job.params.threads,job.params.fastAttention);
       job.computeUsed=selected.mode; job.device=selected.device;
     }
+    const applied = tryResolveActive();
     for (let i = 0; i < job.params.count; i++) {
       if (job.cancelRequested) break;
       job.status = 'generating'; job.current = i + 1;
@@ -57,8 +144,10 @@ async function run(job) {
       const id = randomUUID(), name = `${id}.png`, bytes = Buffer.from(image, 'base64');
       if (!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error('La respuesta del motor no es un PNG válido.');
       const { refs, ...params } = job.params;
-      const loraRecord = selected.merged ? { loraApplication:'merged', mergedModel:MODEL.merged } : { loraApplication:'runtime', runtimeLora:MODEL.runtimeLora, runtimeLoraSha256:MODEL.runtimeLoraSha256 };
-      const record = { ...params, weightStorage:manager?selected.weights:'external', attention:selected.attention||'external', vaeTiling:payload.vae_tiling_params.enabled, computeUsed:job.computeUsed||'external', device:job.device||'external', count: 1, id, seed: params.seed + i, refsCount: refs.length, src: `/outputs/${name}`, createdAt: new Date().toISOString(), model: MODEL.source, modelVersion:MODEL.version, modelRevision:MODEL.revision, lora:MODEL.lora, ...loraRecord, baseRevision:MODEL.baseRevision, loraScale:MODEL.loraScale, baseModel:MODEL.baseSource, quantization: 'Q4_K', scheduler: 'Turbo v0.2.1 FlowMatchEuler, shift_terminal=null', sigmas:payload.sample_params.custom_sigmas, seconds: Math.round((Date.now() - imageStarted)/100)/10, batchSeconds: Math.round((Date.now() - job.startedAt)/1000) };
+      const loraRecord = selected.merged
+        ? { loraApplication:'merged', mergedModel: applied?.diffusion?.file || MODEL.merged }
+        : { loraApplication:'runtime', runtimeLora: selected.runtimeLora || MODEL.runtimeLora, loraRank: applied?.lora?.rank };
+      const record = { ...params, weightStorage:manager?selected.weights:'external', attention:selected.attention||'external', vaeTiling:payload.vae_tiling_params.enabled, computeUsed:job.computeUsed||'external', device:job.device||'external', count: 1, id, seed: params.seed + i, refsCount: refs.length, src: `/outputs/${name}`, createdAt: new Date().toISOString(), model: MODEL.source, modelVersion:MODEL.version, modelRevision:MODEL.revision, lora: applied?.lora?.file || MODEL.lora, ...loraRecord, baseRevision:MODEL.baseRevision, loraScale:MODEL.loraScale, baseModel:MODEL.baseSource, quantization: applied?.quant || 'Q4_K', scheduler: 'Turbo v0.2.1 FlowMatchEuler, shift_terminal=null', sigmas:payload.sample_params.custom_sigmas, seconds: Math.round((Date.now() - imageStarted)/100)/10, batchSeconds: Math.round((Date.now() - job.startedAt)/1000) };
       await writeFile(resolve(outputs, name), bytes);
       if (refs.length) await writeFile(resolve(outputs, `${id}.refs.json`), JSON.stringify(refs));
       await writeFile(resolve(outputs, `${id}.json.tmp`), JSON.stringify(record, null, 2));
@@ -74,7 +163,7 @@ async function run(job) {
     job.status = 'failed'; job.errorCode=diagnosis.code; job.message=diagnosis.message;
     if(released)job.message+=' Se cerró el motor para liberar su memoria; se cargará de nuevo al reintentar.';
     if(job.images.length)job.message+=' Se conservaron las '+job.images.length+' imágenes terminadas.';
-  } finally { job.finishedAt = Date.now(); active = null; }
+  } finally { job.finishedAt = Date.now(); active = null; void applyPendingSelection(); }
 }
 async function gallery() {
   const files = (await readdir(outputs)).filter(f => /^[a-f0-9-]{36}\.json$/.test(f));
@@ -99,7 +188,69 @@ const server = createServer(async (req,res) => {
       const compute = manager?.snapshot() || {managed:false};
       // A job submitted while the engine loads waits for it, so loading does not block the button.
       if(manager)ready=compute.canGenerate;
-      return json(res,200,{ app:'qwen-turbo-local', ready, compute, active: active ? publicJob(active) : null, model:`Qwen 2.1 · Viggle Turbo v${MODEL.version} · Q4_K + LoRA r256`, modelVersion:MODEL.version, recommendedSteps:MODEL.recommendedSteps });
+      const activeModel = tryResolveActive();
+      return json(res,200,{ app:'qwen-turbo-local', ready, compute, active: active ? publicJob(active) : null, model: activeModel ? `Qwen Image 2.1 · ${activeModel.modelLabel}` : 'Qwen Image 2.1 · configuración incompleta', merged: !!activeModel?.merged, loraApplication: activeModel?.loraApplication || null, modelVersion:MODEL.version, recommendedSteps:MODEL.recommendedSteps });
+    }
+    if (req.method === 'GET' && path === '/api/models') return json(res,200,await modelsPayload());
+    if (req.method === 'GET' && path === '/api/models/status') {
+      return json(res,200,{
+        downloads: downloader.snapshot(), busy: downloader.busy,
+        pending: readPending(), selection: readSelection(), lastApplied,
+        jobActive: !!active,
+        engine: manager ? { loading: manager.loading, mode: manager.current?.mode || null, error: manager.error } : { external: true }
+      });
+    }
+    if (req.method === 'POST' && path === '/api/models/select') {
+      if (active || deleting) return json(res,409,{error:'Espera a que termine la generación en curso.'});
+      if (downloader.busy) return json(res,409,{error:'Espera a que terminen las descargas en curso.'});
+      const body = await readBody(req);
+      const selection = normalizeSelection(body?.selection ?? body, { strict: true });
+      const missing = missingRequired(selection);
+      const unavailable = missing.filter(item => !downloadUrl(item));
+      if (unavailable.length) {
+        return json(res,409,{error:`No se puede descargar automáticamente: ${unavailable.map(item => item.label).join(', ')}. Elige otra versión de esa pieza.`});
+      }
+      if (missing.length) {
+        await savePending(selection);
+        downloader.enqueueMany(missing.map(item => item.id));
+        return json(res,202,{ pending:true, selection, downloads: missing.map(item => item.id) });
+      }
+      const changed = JSON.stringify(readSelection()) !== JSON.stringify(selection);
+      await saveSelection(selection);
+      await clearPending();
+      lastApplied = { at: Date.now(), selection };
+      if (changed && manager) {
+        const last = manager.lastRequest;
+        await manager.stop();
+        if (last) void manager.warm(last.requested, last.threads, last.fastAttention);
+      }
+      return json(res,200,{ applied:true, restarted: !!(changed && manager), selection });
+    }
+    if (req.method === 'POST' && path === '/api/models/download') {
+      if (active || deleting) return json(res,409,{error:'Espera a que termine la generación en curso.'});
+      const body = await readBody(req), item = getItem(body?.id);
+      if (isInstalled(item)) return json(res,200,{ installed:true, id:item.id });
+      if (!downloadUrl(item)) return json(res,400,{error:'Este modelo se genera localmente y no se descarga.'});
+      const disk = await diskInfo();
+      if (disk && disk.freeBytes < item.bytes + 512 * 1024 * 1024) {
+        return json(res,400,{error:`Espacio insuficiente: necesitas ${Math.ceil(item.bytes/1024**3)} GB libres y hay ${Math.floor(disk.freeBytes/1024**3)} GB.`});
+      }
+      const state = downloader.enqueue(item.id);
+      return json(res,202,{ queued:true, id:item.id, state });
+    }
+    if (req.method === 'POST' && path === '/api/models/cancel') {
+      const body = await readBody(req);
+      const ok = downloader.cancel(body?.id);
+      return json(res,200,{ ok });
+    }
+    if (req.method === 'POST' && path === '/api/models/delete') {
+      if (active || deleting) return json(res,409,{error:'Espera a que termine la generación en curso.'});
+      if (downloader.busy) return json(res,409,{error:'Espera a que terminen las descargas antes de borrar modelos.'});
+      const body = await readBody(req), item = getItem(body?.id), selection = readSelection();
+      if (selection[item.role] === item.id) return json(res,409,{error:'Ese modelo está activo. Activa otro de la misma pieza antes de borrarlo.'});
+      if (isInstalled(item) && installedCount(item.role) <= 1) return json(res,409,{error:'No puedes borrar la última opción instalada de esta pieza.'});
+      const files = await deleteItemFiles(item);
+      return json(res,200,{ deleted:true, id:item.id, files });
     }
     if (req.method === 'POST' && path === '/api/engine/warmup') {
       if (!manager) return json(res,200,{managed:false});

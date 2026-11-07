@@ -2,20 +2,18 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer } from 'node:net';
 import { cpus, totalmem } from 'node:os';
-import { existsSync, openSync, closeSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, openSync, closeSync } from 'node:fs';
 import { writeFile, appendFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { MODEL, mergedProofValid } from './core.mjs';
+import { MODEL } from './core.mjs';
+import { resolveActive, tryResolveActive } from './model-selection.mjs';
 const exec=promisify(execFile), root=resolve(import.meta.dirname,'..');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export function parseDevices(stdout,runtime){return stdout.split(/\r?\n/).flatMap(line=>{const m=/^(CPU|CUDA\d+|Vulkan\d+)\t(.+)$/i.exec(line.trim());return m?[{id:m[1],name:m[2],runtime,cpu:m[1].toLowerCase()==='cpu'}]:[];});}
-// Transformer with the LoRA fused by scripts/merge-lora.mjs. Without it, the LoRA is applied at runtime.
+// The active selection decides whether the transformer already carries the LoRA.
 export function mergedModel(){
-  try{
-    const proof=JSON.parse(readFileSync(resolve(root,'models/merged-lora.json'),'utf8')), file=resolve(root,'models',MODEL.merged);
-    const valid=mergedProofValid(proof)&&statSync(file).size===proof.outputBytes;
-    return valid?file:null;
-  }catch{return null;}
+  const active=tryResolveActive();
+  return active?.merged?active.diffusionPath:null;
 }
 const DEDICATED=/geforce|rtx|quadro|tesla|radeon (rx|pro)|arc(\(tm\))? [ab]\d/i;
 export function chooseMode(requested,hardware){
@@ -32,9 +30,12 @@ export function chooseMode(requested,hardware){
 // Measured on RTX 4070 Laptop 8 GB, 1024x1024, 6 steps: weights streamed from disk 58 s; weights in RAM 30 s;
 // + direct-convolution VAE without tiles 27 s; + merged LoRA (transformer resident in VRAM) see README.
 export function engineFeatures(selection,fastAttention=true){
+  const active=resolveActive();
   const cuda=/^cuda/i.test(selection.device);
   return {
-    merged:!!mergedModel(),
+    merged:active.merged,
+    runtimeLora:active.runtimeLora,
+    selection:active.selection,
     attention:cuda&&fastAttention?'sage':'flash',
     // Direct 2D/3D convolutions: VAE decode 2.9x faster on CUDA, 1.6x on Vulkan, equal on CPU, far less memory.
     convDirect:true,
@@ -42,9 +43,9 @@ export function engineFeatures(selection,fastAttention=true){
   };
 }
 export function engineArgs(selection,threads,port,features=engineFeatures(selection)){
-  const merged=features.merged&&mergedModel();
-  const args=['--diffusion-model',merged||resolve(root,'models',MODEL.base),'--llm',resolve(root,'models/Qwen3VL-8B-Instruct-Q4_K_M.gguf'),'--llm_vision',resolve(root,'models/mmproj-Qwen3VL-8B-Instruct-F16.gguf'),'--vae',resolve(root,'models/qwen_image_2.1_vae_bf16.safetensors'),'--backend',selection.backend,'--threads',String(threads||-1),'--cfg-scale','1','--sampling-method','euler','--listen-ip','127.0.0.1','--listen-port',String(port),'--log-level','info'];
-  if(!merged)args.push('--lora-model-dir',resolve(root,'models/loras'),'--lora-apply-mode','at_runtime');
+  const active=resolveActive();
+  const args=['--diffusion-model',active.diffusionPath,'--llm',active.llmPath,'--llm_vision',active.mmprojPath,'--vae',active.vaePath,'--backend',selection.backend,'--threads',String(threads||-1),'--cfg-scale','1','--sampling-method','euler','--listen-ip','127.0.0.1','--listen-port',String(port),'--log-level','info'];
+  if(!active.merged)args.push('--lora-model-dir',resolve(root,'models/loras'),'--lora-apply-mode','at_runtime');
   args.push(features.attention==='sage'?'--sage-attn':'--diffusion-fa');
   if(features.convDirect)args.push('--vae-conv-direct');
   // CPU reads the weights in place from the OS file cache, as llama.cpp does by default.
@@ -56,7 +57,7 @@ export async function assertPortFree(port){
   await new Promise((ok,bad)=>{const probe=createServer();probe.once('error',()=>bad(new Error('El puerto del motor está ocupado por otra instancia. Ciérrala antes de generar.')));probe.listen(port,'127.0.0.1',()=>probe.close(ok));});
 }
 export class EngineManager {
-  constructor(port){this.port=port;this.child=null;this.current=null;this.loading=false;this.error=null;this.hardware=null;this.queue=Promise.resolve();this.detection=this.detect();}
+  constructor(port){this.port=port;this.child=null;this.current=null;this.loading=false;this.error=null;this.hardware=null;this.queue=Promise.resolve();this.lastRequest=null;this.detection=this.detect();}
   async detect(){
     const runs=await Promise.all([MODEL.runtimeCpu,MODEL.runtime,MODEL.runtimeVulkan].filter(Boolean).map(async runtime=>{
       const exe=resolve(root,runtime,'sd-server.exe');if(!existsSync(exe))return [];
@@ -77,11 +78,13 @@ export class EngineManager {
   // Starts the engine and loads the weights before the first image, while the user writes the prompt.
   warm(requested,threads=0,fastAttention=true){return this.ensure(requested,threads,fastAttention).catch(()=>null);}
   async start(requested,threads,fastAttention){
-    const hardware=await this.detection;const selection=chooseMode(requested,hardware);const features=engineFeatures(selection,fastAttention);
-    const key=JSON.stringify([selection.mode,selection.device,threads,features]);
-    if(this.child&&this.current?.key===key&&this.child.exitCode===null&&this.child.signalCode===null)return this.current;
+    const hardware=await this.detection;const selection=chooseMode(requested,hardware);
     this.loading=true;this.error=null;
     try{
+      const features=engineFeatures(selection,fastAttention);
+      this.lastRequest={requested,threads,fastAttention};
+      const key=JSON.stringify([selection.mode,selection.device,threads,features]);
+      if(this.child&&this.current?.key===key&&this.child.exitCode===null&&this.child.signalCode===null)return this.current;
       await this.stop();
       await assertPortFree(this.port);
       const exe=resolve(root,selection.runtime,'sd-server.exe'), args=[...engineArgs(selection,threads,this.port,features),'--eager-load'];

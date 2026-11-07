@@ -74,7 +74,7 @@ export function enginePayload(params, index = 0, engine = {}) {
     seed: params.seed + index, batch_count: 1, ref_images: params.refs,
     // Same as the deprecated increase_ref_index: references are numbered image 1, image 2…
     auto_resize_ref_image: true, ref_image_args: 'ref_index_mode=increase', embed_image_metadata: true,
-    lora: engine.merged ? [] : [{path:MODEL.runtimeLora,multiplier:MODEL.loraScale,is_high_noise:false}],
+    lora: engine.merged ? [] : [{path:engine.runtimeLora||MODEL.runtimeLora,multiplier:MODEL.loraScale,is_high_noise:false}],
     sample_params: { sample_method: 'euler', sample_steps: params.steps,
       custom_sigmas: turboSigmas(params.width, params.height, params.steps), guidance: { txt_cfg: 1.0 } },
     vae_tiling_params: vaeTiling(params.width, params.height, engine),

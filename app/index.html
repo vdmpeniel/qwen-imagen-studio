@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Qwen Imagen Studio</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%237754dc'/%3E%3Cpath d='M23 5L11 23h9l-3 12 14-20h-10z' fill='white'/%3E%3C/svg%3E"><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
 <body>
-<header><a class="brand" href="/"><span class="logo">ϟ</span><strong>qwen<span> / imagen studio</span></strong></a><div class="header-right"><span class="local">◉ Solo en tu equipo</span><button id="theme" class="icon" aria-label="Cambiar tema">◐</button></div></header>
+<header><a class="brand" href="/"><span class="logo">ϟ</span><strong>qwen<span> / imagen studio</span></strong></a><div class="header-right"><span class="local">◉ Solo en tu equipo</span><button id="models" class="icon" aria-label="Configuración de modelos" title="Configuración de modelos">⚙</button><button id="theme" class="icon" aria-label="Cambiar tema">◐</button></div></header>
 <main>
 <aside class="controls">
 <div class="eyebrow">TU ESTUDIO GENERATIVO</div><h1>Una idea.<br><em>Infinitas imágenes.</em></h1><p class="intro">De tu imaginación al lienzo, en local.</p>
@@ -37,4 +37,15 @@
 <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 <div class="library-heading"><div><span class="eyebrow">BIBLIOTECA LOCAL</span><h2>Tus exploraciones <span id="galleryCount">0</span></h2></div><button id="deleteAll" type="button" class="secondary danger" disabled>Eliminar todas</button></div><div class="selection-bar"><label><input id="selectAll" type="checkbox"> Seleccionar todas</label><span id="selectionCount">0 seleccionadas</span><button id="deleteSelected" class="secondary danger" disabled>Eliminar seleccionadas</button></div><div id="gallery" class="gallery"></div><p id="galleryEmpty" class="gallery-empty">Las imágenes que crees aparecerán aquí, incluso después de cerrar la app.</p>
 <footer>QWEN IMAGE 2.1 <span>× VIGGLE TURBO v0.2.1</span><span>Motor independiente · CPU / GPU · 4 bits</span></footer>
-</section></main></body></html>
+</section></main>
+<dialog id="modelsDialog" class="models-dialog" aria-labelledby="modelsTitle">
+<header class="models-head">
+<div><span class="eyebrow">CONFIGURACIÓN DE MODELOS</span><h2 id="modelsTitle">Piezas del motor</h2></div>
+<div class="models-head-right"><span id="modelsDisk" class="models-disk"></span><button type="button" id="modelsClose" class="icon" aria-label="Cerrar la configuración de modelos">×</button></div>
+</header>
+<p class="models-intro">Elige una versión por pieza. Al aplicar, se descargan solo los archivos que falten, se verifican y el motor se recarga. Los modelos antiguos se conservan hasta que los borres.</p>
+<div id="modelsNotice" class="notice models-notice" role="status" aria-live="polite" hidden></div>
+<div id="modelsBody" class="models-body"><p class="hint">Cargando el catálogo de modelos…</p></div>
+<footer class="models-foot"><p id="modelsSummary" class="models-summary"></p><div class="models-actions"><button type="button" id="modelsCancel" class="secondary">Cancelar</button><button type="button" id="modelsApply" class="primary">Aplicar cambios</button></div></footer>
+</dialog>
+</body></html>

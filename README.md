@@ -8,7 +8,7 @@
 
 - **Texto → imagen** y **edición con hasta 2 imágenes de referencia** («pon el zorro de la imagen 1 en…»).
 - **CPU, GPU NVIDIA (CUDA), GPU AMD/Intel (Vulkan) o CPU + GPU.** El modo automático elige lo más rápido para tu equipo, también en portátiles con GPU integrada o en PCs sin tarjeta gráfica.
-- **Todo local y privado:** los prompts, referencias e imágenes no salen del equipo. Internet solo se usa durante la instalación.
+- **Todo local y privado:** los prompts, referencias e imágenes no salen del equipo. Internet solo se usa para descargar motores y modelos (durante la instalación o desde el gestor de modelos).
 - Formatos 1:1, 16:9, 9:16, 4:3 o tamaño libre de 256 a 2048 px; lotes de 1 a 8 imágenes; semillas reproducibles; fondo transparente.
 - **Biblioteca local** con cada imagen y sus parámetros (PNG + JSON), reutilización de ajustes, descarga y borrado con papelera.
 - Instalador que **descarga y verifica automáticamente** todo lo necesario: motores, modelos, Node.js y el runtime de Visual C++.
@@ -89,6 +89,22 @@ En **05 · Equipo de generación → Procesamiento**:
 
 **Atención rápida** (activada por defecto, solo NVIDIA) usa SageAttention: un 12 % más rápido con la misma composición y calidad; los detalles finos pueden variar ligeramente. Desactívala si quieres reproducir exactamente imágenes creadas sin ella.
 
+## Gestor de modelos
+
+El botón **⚙** de la cabecera abre **Piezas del motor**, donde puedes cambiar, descargar y borrar los cinco componentes de la generación:
+
+| Pieza | Opciones |
+| --- | --- |
+| Difusión | Modelos oficiales Viggle fusionados (Q4_K_M a Q8_0), el Q4_K fusionado local y bases Qwen Image 2.1 (Q2_K a Q8_0). |
+| Codificador de texto | Qwen3‑VL 8B en Q4_K_M, Q8_0, F16 y cuantizaciones pequeñas de unsloth (UD‑IQ2_XXS, Q2_K, Q3_K_S…). |
+| Proyector de visión | `mmproj` F16 u Q8_0. |
+| LoRA Turbo | r256 o r128; solo se aplica con modelos de difusión «base». |
+| VAE | Versión oficial bf16. |
+
+Cada fila indica el tamaño y si está instalada. El botón **Descargar** reanuda descargas interrumpidas y verifica el SHA‑256 oficial antes de dar el archivo por bueno; **Borrar** elimina versiones que no estén en uso. No se puede borrar el modelo activo ni la última opción instalada de una pieza. Al pulsar **Aplicar cambios**, se descargan automáticamente las piezas que falten, se verifican y el motor se recarga solo. Los archivos antiguos se conservan hasta que los borres.
+
+Para equipos con 10 GB de RAM, la combinación más ligera es difusión **Q2_K** (2,56 GB) + LoRA **r128** (0,68 GB) + codificador **UD‑IQ2_XXS** (2,61 GB) + `mmproj` **Q8_0** (0,75 GB) + VAE (0,68 GB), unos 7,3 GB en total. Aun así, la GPU integrada puede quedarse sin memoria: usa **CPU + GPU** o **CPU** si ocurre.
+
 ## Rendimiento de referencia
 
 Portátil con Ryzen 7 8845HS, 32 GB de RAM y RTX 4070 Laptop de 8 GB, 6 pasos:
@@ -108,7 +124,7 @@ Los detalles de cada optimización y cómo se midieron están en [docs/TECNICO.m
 | Síntoma | Solución |
 | --- | --- |
 | «Descarga interrumpida» durante la instalación | Vuelve a ejecutar el instalador: reanuda la descarga. |
-| «Falta …. Ejecuta Instalar Qwen Imagen Studio.cmd» al iniciar | La instalación no terminó; ejecuta de nuevo el instalador. |
+| «Falta …. Ejecuta Instalar Qwen Imagen Studio.cmd» al iniciar | La instalación no terminó; ejecuta de nuevo el instalador o abre el **gestor de modelos ⚙** para descargar la pieza que falte. |
 | «La GPU no tuvo memoria suficiente» | Usa un tamaño menor, el modo **CPU + GPU** o **CPU**, y cierra otros programas que usen la GPU. |
 | «No quedó suficiente memoria RAM» | Cierra aplicaciones pesadas o reduce el tamaño de la imagen. |
 | No aparece mi GPU | Actualiza el controlador (NVIDIA, AMD o Intel) y vuelve a abrir la app. |
