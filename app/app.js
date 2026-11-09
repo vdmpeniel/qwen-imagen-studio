@@ -231,8 +231,10 @@ function modelRow(item,role,locked){
     actions.append(modelActionButton('Verificando…','secondary',()=>{},true));
   }else if(!item.installed&&item.downloadable){
     actions.append(modelActionButton('Descargar','secondary',()=>downloadModel(item),!item.canDownload));
-  }else if(item.installed&&!item.active&&item.canDelete&&!chosen){
-    actions.append(modelActionButton('Borrar','secondary danger',()=>{models.confirm=item.id;renderModels();}));
+  }else if(item.installed){
+    const button=modelActionButton('Borrar','secondary danger',()=>{models.confirm=item.id;renderModels();},!item.canDelete);
+    if(item.deleteBlock)button.title=item.deleteBlock;
+    actions.append(button);
   }
   row.append(radio,info,size,actions);return row;
 }
@@ -295,7 +297,13 @@ async function cancelModel(item){
   catch(error){modelMessage(error.message,true);}
 }
 async function deleteModel(item){
-  try{await api('/api/models/delete',{method:'POST',body:JSON.stringify({id:item.id})});models.confirm=null;modelMessage(`${item.short} se borró del disco.`);await refreshModels();}
+  try{
+    await api('/api/models/delete',{method:'POST',body:JSON.stringify({id:item.id})});models.confirm=null;modelMessage(`${item.short} se borró del disco.`);await refreshModels();
+    if(models.draft&&models.draft[item.role]===item.id){
+      models.draft[item.role]=models.data?.selection?.[item.role]||'';models.dirty=true;
+      if(models.open)renderModels();
+    }
+  }
   catch(error){modelMessage(error.message,true);}
 }
 async function applyModels(){

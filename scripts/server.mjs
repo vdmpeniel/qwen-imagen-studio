@@ -70,12 +70,19 @@ async function modelsPayload() {
   const items = CATALOG.items.map(item => {
     const installed = isInstalled(item);
     const isActive = selection[item.role] === item.id;
+    const deleteBlock = !installed ? null
+      : busylock ? 'Espera a que termine la generación en curso.'
+      : downloader.busy ? 'Espera a que terminen las descargas en curso.'
+      : isActive ? 'Es el modelo activo. Activa otra variante y aplica antes de borrarlo.'
+      : installedCount(item.role) <= 1 ? 'Es la última opción instalada de esta pieza.'
+      : null;
     return {
       ...modelItem(item),
       installed,
       active: isActive,
       canDownload: !installed && !!downloadUrl(item) && !busylock,
-      canDelete: installed && !isActive && installedCount(item.role) > 1 && !busylock && !downloader.busy,
+      canDelete: installed && !deleteBlock,
+      deleteBlock,
       state: downloader.stateOf(item.id)
     };
   });

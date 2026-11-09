@@ -101,7 +101,7 @@ El botón **⚙** de la cabecera abre **Piezas del motor**, donde puedes cambiar
 | LoRA Turbo | r256 o r128; solo se aplica con modelos de difusión «base». |
 | VAE | Versión oficial bf16. |
 
-Cada fila indica el tamaño y si está instalada. El botón **Descargar** reanuda descargas interrumpidas y verifica el SHA‑256 oficial antes de dar el archivo por bueno; **Borrar** elimina versiones que no estén en uso. No se puede borrar el modelo activo ni la última opción instalada de una pieza. Al pulsar **Aplicar cambios**, se descargan automáticamente las piezas que falten, se verifican y el motor se recarga solo. Los archivos antiguos se conservan hasta que los borres.
+Cada fila indica el tamaño y si está instalada. El botón **Descargar** reanuda descargas interrumpidas y verifica el SHA-256 oficial antes de dar el archivo por bueno; **Borrar** aparece en todas las variantes instaladas y elimina versiones que no estén en uso (se deshabilita si es el modelo activo o la última opción de una pieza). No se puede borrar el modelo activo ni la última opción instalada de una pieza. Al pulsar **Aplicar cambios**, se descargan automáticamente las piezas que falten, se verifican y el motor se recarga solo. Los archivos antiguos se conservan hasta que los borres.
 
 Para equipos con 10 GB de RAM, la combinación más ligera es difusión **Q2_K** (2,56 GB) + LoRA **r128** (0,68 GB) + codificador **UD‑IQ2_XXS** (2,61 GB) + `mmproj` **Q8_0** (0,75 GB) + VAE (0,68 GB), unos 7,3 GB en total. Aun así, la GPU integrada puede quedarse sin memoria: usa **CPU + GPU** o **CPU** si ocurre.
 
