@@ -63,3 +63,7 @@
  .models-foot .models-actions{width:100%;margin-left:0}
  .models-foot .models-actions button{flex:1}
 }
+.local{display:inline-flex;align-items:center;gap:6px}
+.local-dot{font-style:normal;line-height:1}
+.local-spinner{width:10px;height:10px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--purple);animation:spin 1s linear infinite}
+.icon svg{display:block}

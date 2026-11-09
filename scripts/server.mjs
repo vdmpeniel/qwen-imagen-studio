@@ -189,7 +189,7 @@ const server = createServer(async (req,res) => {
       // A job submitted while the engine loads waits for it, so loading does not block the button.
       if(manager)ready=compute.canGenerate;
       const activeModel = tryResolveActive();
-      return json(res,200,{ app:'qwen-turbo-local', ready, compute, active: active ? publicJob(active) : null, model: activeModel ? `Qwen Image 2.1 · ${activeModel.modelLabel}` : 'Qwen Image 2.1 · configuración incompleta', merged: !!activeModel?.merged, loraApplication: activeModel?.loraApplication || null, modelVersion:MODEL.version, recommendedSteps:MODEL.recommendedSteps });
+      return json(res,200,{ app:'qwen-turbo-local', ready, compute, active: active ? publicJob(active) : null, model: activeModel ? `Qwen Image 2.1 · ${activeModel.modelLabel}` : 'Qwen Image 2.1 · configuración incompleta', merged: !!activeModel?.merged, loraApplication: activeModel?.loraApplication || null, modelsBusy: downloader.busy || applying, modelVersion:MODEL.version, recommendedSteps:MODEL.recommendedSteps });
     }
     if (req.method === 'GET' && path === '/api/models') return json(res,200,await modelsPayload());
     if (req.method === 'GET' && path === '/api/models/status') {

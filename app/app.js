@@ -1,6 +1,6 @@
 'use strict';
 const $ = s => document.querySelector(s);
-const state = { refs: [], gallery: [], selected: null, job: null, ready: false, polling: false, deleting: false, checked: new Set(), hardware: null };
+const state = { refs: [], gallery: [], selected: null, job: null, ready: false, modelsBusy: false, polling: false, deleting: false, checked: new Set(), hardware: null };
 async function api(path, options = {}) {
   const r = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
   const data = await r.json(); if (!r.ok) throw new Error(data.error || `Error ${r.status}`); return data;
@@ -26,7 +26,8 @@ function refreshForm() {
   $('#canvasSize').textContent = `${s.width} × ${s.height}`; $('#megapixels').textContent = `${(s.width*s.height/1e6).toFixed(2)} MP`;
   document.querySelectorAll('.preset').forEach(b => b.classList.toggle('active', +b.dataset.w === s.width && +b.dataset.h === s.height));
   $('#stepsHint').textContent = s.steps === 6 ? '6 pasos · configuración recomendada para Viggle v0.2.1.' : 'Modo experimental: usa 6 pasos para v0.2.1. Se conservan los nodos de entrenamiento al añadir pasos; menos de 4 no está recomendado.';
-  $('#generate').disabled = !!state.job || !state.ready;
+  $('#generate').disabled = !!state.job || !state.ready || state.modelsBusy;
+  $('#generate').title = state.modelsBusy ? 'Espera a que terminen las descargas y la recarga de modelos.' : '';
   $('#compute').disabled=!!state.job;$('#fastAttention').disabled=!!state.job;
   $('#computeHint').textContent={auto:'Automático usa GPU con una tarjeta dedicada, CPU + GPU con una GPU integrada y CPU si no hay GPU compatible.',cpu:'Todo el cálculo se realiza en CPU. Puede tardar varios minutos o más. Empieza con 512 × 512 y 6 pasos. 0 hilos = automático.',gpu:'Todo el cálculo se realiza en la GPU. Los pesos esperan en RAM y cada modelo pasa a la VRAM cuando se necesita.',hybrid:'La CPU interpreta el texto y las referencias; la GPU genera y decodifica la imagen. Para GPU integrada o con poca VRAM; con una GPU dedicada de 8 GB, GPU es algo más rápido.'}[$('#compute').value]+' Al cambiar el modo, los modelos se cargan de nuevo en segundo plano.';
   syncSelection();
@@ -132,15 +133,15 @@ async function followJob(id) {
   catch(e){state.job=null;$('#working').hidden=true;notice(`No se pudo consultar la generación: ${e.message}. Reconectando al motor…`,true);}
   finally{state.polling=false;refreshForm();}
 }
-$('#form').onsubmit=async e=>{e.preventDefault();if(state.job)return;$('#generate').disabled=true;$('#notice').hidden=true;try{const job=await api('/api/jobs',{method:'POST',body:JSON.stringify({...settings(),refs:state.refs})});showJob(job);void followJob(job.id);}catch(e){notice(e.message,true);refreshForm();}};
+$('#form').onsubmit=async e=>{e.preventDefault();if(state.job||state.modelsBusy)return;$('#generate').disabled=true;$('#notice').hidden=true;try{const job=await api('/api/jobs',{method:'POST',body:JSON.stringify({...settings(),refs:state.refs})});showJob(job);void followJob(job.id);}catch(e){notice(e.message,true);refreshForm();}};
 $('#cancel').onclick=async()=>{if(!state.job)return;try{const job=await api(`/api/jobs/${state.job.id}/cancel`,{method:'POST',body:'{}'});showJob(job);}catch(e){notice(e.message,true);}};
-document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();if(state.ready&&!state.job)$('#form').requestSubmit();}});
-async function status() {let loading=false;try{const s=await api('/api/status');state.ready=s.ready;loading=!!s.compute?.loading;
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();if(state.ready&&!state.job&&!state.modelsBusy)$('#form').requestSubmit();}});
+async function status() {let loading=false;try{const s=await api('/api/status');state.ready=s.ready;state.modelsBusy=!!s.modelsBusy;loading=!!s.compute?.loading;
 if(s.compute?.hardware){const h=s.compute.hardware,first=!state.hardware;state.hardware=h;$('#hardwareInfo').textContent=h.cpuName+' · '+h.logicalCores+' hilos · '+h.ramGB+' GB RAM. '+(h.gpus.length?'GPU: '+h.gpus.map(g=>g.name+(g.integrated?' (integrada)':'')).join(', '):'Sin GPU compatible detectada. Puedes generar con CPU.');for(const o of $('#compute').options)o.disabled=!h.modes.includes(o.value);
 $('#fastAttention').closest('label').hidden=!h.gpus.some(g=>/^cuda/i.test(g.id));
 $('#engineInfo').textContent=s.model+' · '+(s.loraApplication==='merged'?'LoRA fusionado en los pesos (más rápido y con menos VRAM).':s.loraApplication==='runtime'?'LoRA aplicado en tiempo de ejecución.':'')+' Euler con el planificador Turbo, CFG 1 y sin prompt negativo, como requiere este modelo.';
 if(first)warmEngine();}
-const current=s.compute?.current;$('#status').classList.toggle('ready',s.ready&&!loading);$('#status').lastChild.textContent=s.ready?(loading?' Cargando modelos…':current?' Motor listo · '+({cpu:'CPU',gpu:'GPU',hybrid:'CPU + GPU'}[current.mode]):' Listo para generar'):' Detectando / desconectado';if(s.active&&!state.job){showJob(s.active);void followJob(s.active.id);}}catch{state.ready=false;$('#status').classList.remove('ready');$('#status').lastChild.textContent=' Servidor desconectado';}refreshForm();setTimeout(status,loading?1500:5000);}
+const current=s.compute?.current;const activity=state.modelsBusy||loading;$('#localDot').hidden=activity;$('#localSpinner').hidden=!activity;$('#status').classList.toggle('ready',s.ready&&!loading&&!state.modelsBusy);$('#status').lastChild.textContent=state.modelsBusy?' Descargando modelos…':s.ready?(loading?' Cargando modelos…':current?' Motor listo · '+({cpu:'CPU',gpu:'GPU',hybrid:'CPU + GPU'}[current.mode]):' Listo para generar'):' Detectando / desconectado';if(s.active&&!state.job){showJob(s.active);void followJob(s.active.id);}}catch{state.ready=false;state.modelsBusy=false;$('#localDot').hidden=false;$('#localSpinner').hidden=true;$('#status').classList.remove('ready');$('#status').lastChild.textContent=' Servidor desconectado';}refreshForm();setTimeout(status,loading||state.modelsBusy?1500:5000);}
 
 const numberPresets={width:[512,768,1024,1152,1344,1536,2048],height:[512,768,864,1024,1152,1344,1536,2048],steps:[4,5,6,7,8,12,20,30,40],threads:[0,2,4,8,12,16,24,32],seed:[-1,0,42,12345,424242]};
 const numberLabels={width:'Ancho',height:'Alto',steps:'Pasos',seed:'Semilla',threads:'Hilos de CPU'};
