@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compila sd-server con backend CUDA para esta revisión fijada.
 # Uso: scripts/build-cuda.sh <carpeta-destino>
-# Sin binario CUDA precompilado en Linux, esta es la vía de paridad con Windows.
+# Sin binario CUDA precompilado en Linux, compilar el motor es la única vía para usar CUDA.
 # Si falla, el instalador usa Vulkan para la GPU. NO probado en este equipo (sin NVIDIA).
 set -euo pipefail
 

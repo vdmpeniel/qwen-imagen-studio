@@ -1,6 +1,6 @@
 # Qwen Imagen Studio — rama Linux
 
-> Esta rama (`linux-based`) es el port a **Linux** de la versión Windows. Los scripts `.cmd`/`.ps1` se sustituyen por `.sh`; el resto de la app es idéntico.
+> Esta rama (`linux-based`) es el port a **Linux**. La app es la misma; la instalación, el arranque y el cierre se hacen con scripts `.sh`.
 
 **Crea y edita imágenes con IA en tu propio PC, con CPU, GPU o ambas.** Estudio web local en español para [Qwen-Image 2.1](https://huggingface.co/leejet/Qwen-Image-2.1-GGUF) con la aceleración [Viggle Turbo v0.2.1](https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo): una imagen de 1024 × 1024 en unos 18 segundos con una GPU de 8 GB, sin cuentas, sin créditos y sin enviar nada a la nube.
 
@@ -31,7 +31,7 @@
 | | Mínimo | Recomendado |
 | --- | --- | --- |
 | Sistema | Linux de 64 bits (probado en Mint 22.3 / Ubuntu 24.04) | Ubuntu 24.04 |
-| RAM | 16 GB (cierra otras aplicaciones pesadas) | 32 GB (equipo en el que se probó la versión Windows) |
+| RAM | 16 GB (cierra otras aplicaciones pesadas) | 32 GB (equipo de referencia) |
 | Disco libre | 25 GB durante la instalación (13 GB al terminar) | SSD |
 | GPU | Opcional | NVIDIA con 8 GB de VRAM o más |
 | Internet | Solo para instalar (hasta 17 GB de descarga) | — |

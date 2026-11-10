@@ -19,7 +19,7 @@ Navegador (app/)  ──HTTP──▶  Servidor Node (scripts/server.mjs, 127.0.
 - `scripts/core.mjs`: validación de peticiones, planificador Turbo (sigmas), carga útil del motor y política del VAE.
 - `scripts/engine-manager.mjs`: detección de hardware, modo automático, argumentos del motor por modo y arranque serializado.
 - `scripts/merge-lora.mjs` + `scripts/gguf.mjs`: creación del modelo optimizado (LoRA fusionado).
-- `scripts/install.sh`, `start.sh`, `stop.sh`, `common.sh`: instalación y ciclo de vida en Linux (esta rama). En Windows eran `install.ps1`, `start.ps1`, `stop.ps1`, `common.ps1`.
+- `scripts/install.sh`, `start.sh`, `stop.sh`, `common.sh`: instalación y ciclo de vida en Linux.
 - `scripts/build-cuda.sh`: compila `sd-server` con CUDA bajo demanda (sin binario precompilado Linux para esta revisión).
 
 ## Rendimiento
@@ -68,7 +68,7 @@ Comunes: `--vae-conv-direct`, `--eager-load`, `--diffusion-fa` (o `--sage-attn` 
 
 - `models/merged-lora.json` guarda hashes de origen y resultado, tamaño y el cambio relativo de cada uno de los 195 tensores fusionados (se usan los 454 tensores del LoRA).
 - Validación visual con la misma semilla: el fusionado y el LoRA en tiempo de ejecución dan la misma imagen Turbo con variaciones menores (PSNR 25 dB, equivalente al ruido de cuantización); la base sin LoRA da otra imagen, borrosa (PSNR 13,8 dB). Comparación en `qa/optimizacion/calidad-lora-fusionado-base.jpg`.
-- Si no existe el fusionado (o se instala con `-NoMerge`), la app usa la base Q4_K + el LoRA aplicado en cada paso (`scripts/prepare-lora.mjs` adapta las capas `gate_layer`/`proj` al `gate_up` del GGUF sin alterar valores).
+- Si no existe el fusionado (o se instala con `--no-merge`), la app usa la base Q4_K + el LoRA aplicado en cada paso (`scripts/prepare-lora.mjs` adapta las capas `gate_layer`/`proj` al `gate_up` del GGUF sin alterar valores).
 
 ## Particularidades de Turbo
 
@@ -86,14 +86,14 @@ Comunes: `--vae-conv-direct`, `--eager-load`, `--diffusion-fa` (o `--sage-attn` 
 | `mmproj-Qwen3VL-8B-Instruct-F16.gguf` | 1,2 GB | Mismo repositorio Qwen (lectura de imágenes de referencia) |
 | `qwen_image_2.1_vae_bf16.safetensors` | 0,7 GB | VAE de Qwen-Image 2.1 publicado por [Comfy-Org](https://huggingface.co/Comfy-Org/Qwen-Image-2.1) |
 
-Todas las revisiones y SHA256 están fijados en `model-config.json` y en `scripts/install.sh` (Linux; en Windows era `scripts/install.ps1`). Los motores `stable-diffusion.cpp` están fijados en la versión `88411ef`.
+Todas las revisiones y SHA256 están fijados en `model-config.json` y en `scripts/install.sh`. Los motores `stable-diffusion.cpp` están fijados en la versión `88411ef`.
 
 ## Notas Linux (rama `linux-based`)
 
-- Binarios: `sd-master-88411ef-bin-Linux-Ubuntu-24.04-x86_64.zip` (CPU) y `...-vulkan.zip` (Vulkan para NVIDIA/AMD/Intel) con SHA256 fijados en `install.sh`. El binario es `sd-server` con `chmod +x` (sin `.exe`, sin `windowsHide`).
+- Binarios: `sd-master-88411ef-bin-Linux-Ubuntu-24.04-x86_64.zip` (CPU) y `...-vulkan.zip` (Vulkan para NVIDIA/AMD/Intel) con SHA256 fijados en `install.sh`. El binario es `sd-server` con `chmod +x`.
 - **Sin CUDA precompilado** en Linux para esta revisión: `--backend cuda` (o `auto` con NVIDIA) compila vía `scripts/build-cuda.sh` (`cmake -DSD_CUDA=ON`, necesita `nvidia-cuda-toolkit`). Si falla, el instalador usa Vulkan. Vía CUDA **no probada** en el equipo de desarrollo (sin NVIDIA).
 - Por Vulkan no hay SageAttention: el *toggle* de atención rápida se oculta solo (regla `^cuda` existente en `app.js`). El resto de flags (`--offload-to-cpu`, `--vae-conv-direct`, `--eager-load`) es idéntico.
-- Node.js portable: `node-v24.21.0-linux-x64.tar.xz` en `node/`; dependencias del sistema `curl unzip libgomp1 libvulkan1` en vez de Visual C++.
+- Node.js portable: `node-v24.21.0-linux-x64.tar.xz` en `node/`; dependencias del sistema `curl unzip libgomp1 libvulkan1`.
 
 ## Pruebas
 

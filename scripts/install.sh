@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Instalador de Qwen Imagen Studio (Linux).
 # Uso: ./instalar.sh [--backend auto|cpu|cuda|vulkan] [--no-merge] [--sin-gpu]
-# Equivale a scripts/install.ps1 de Windows, adaptado a binarios Linux.
+# Instalador de Qwen Imagen Studio (Linux): descarga y verifica motores, modelos y Node.js.
 set -euo pipefail
 
 BACKEND="auto"

@@ -20,7 +20,7 @@ get_app_node() {
   return 1
 }
 
-# Dependencias del sistema para los motores Linux (sin Visual C++).
+# Dependencias del sistema para los motores Linux.
 # Devuelve 0 si está todo, 1 si falta algo (e imprime qué instalar).
 check_linux_deps() {
   local missing=""
