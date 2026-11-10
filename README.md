@@ -40,7 +40,7 @@ No necesitas instalar Python, Node.js, CUDA ni ninguna otra herramienta: el inst
 
 1. **Descarga la app.** En esta página pulsa **Code → Download ZIP** y descomprímelo en una carpeta con al menos 25 GB libres, por ejemplo `D:\Programas\qwen-imagen-studio`. También puedes clonarla:
    ```powershell
-   git clone https://github.com/jceronch1/qwen-imagen-studio.git
+   git clone https://github.com/vdmpeniel/qwen-imagen-studio.git
    ```
    Evita carpetas sincronizadas con OneDrive o similares: los modelos son archivos muy grandes.
 
