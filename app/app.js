@@ -187,7 +187,14 @@ const TEXT = {
   modelActivating: ['Activando {name}…', 'Activating {name}…'],
   modelMissingFiles: ['Faltan {n} archivo(s). {name} se activará automáticamente cuando terminen las descargas.', '{n} file(s) missing. {name} will activate automatically when the downloads finish.'],
   modelActivatedRestart: ['{name} activado. El motor se está recargando.', '{name} activated. The engine is reloading.'],
-  modelActivated: ['{name} activado.', '{name} activated.']
+  modelActivated: ['{name} activado.', '{name} activated.'],
+  modelReinstall: ['Reinstalar', 'Reinstall'],
+  modelReinstallConfirm: ['Reinstalar «{name}»: se descargan las fuentes oficiales (unos 8,5 GB) y se fusionan de nuevo. Puede tardar varios minutos. ¿Continuar?', 'Reinstall “{name}”: the official sources (about 8.5 GB) are downloaded and merged again. This may take several minutes. Continue?'],
+  modelReinstallStart: ['Reinstalando {name}. El progreso aparece en esta ventana; puedes seguir usando la app.', 'Reinstalling {name}. Progress appears in this window; you can keep using the app.'],
+  modelReinstallDone: ['{name} restaurado. Actívalo para volver a usarlo.', '{name} restored. Activate it to use it again.'],
+  modelCancelRebuild: ['Cancelar reinstalación', 'Cancel reinstall'],
+  modelCancelRebuildMsg: ['Reinstalación de {name} cancelada. Las fuentes descargadas se conservan para reanudarla.', 'Reinstall of {name} cancelled. Downloaded sources are kept so it can resume.'],
+  downloadMerging: ['Fusionando el modelo', 'Merging the model']
 };
 const SERVER_EN = {
   'Qwen Image 2.1 · configuración incompleta': 'Qwen Image 2.1 · incomplete configuration',
@@ -223,7 +230,16 @@ const SERVER_EN = {
   'La respuesta del motor no es un PNG válido.': 'The engine response is not a valid PNG.',
   'El motor no pudo completar la imagen.': 'The engine could not complete the image.',
   'No quedó suficiente memoria RAM o swap para completar la imagen. Cierra otras aplicaciones pesadas y vuelve a intentarlo; si persiste, reduce el tamaño.': 'There was not enough RAM or swap to complete the image. Close other heavy applications and try again; if it persists, reduce the size.',
-  'La GPU no tuvo memoria suficiente para completar la imagen. Prueba un tamaño menor, el modo CPU + GPU (texto en CPU) o CPU.': 'The GPU did not have enough memory to complete the image. Try a smaller size, CPU + GPU mode (text on CPU) or CPU.'
+  'La GPU no tuvo memoria suficiente para completar la imagen. Prueba un tamaño menor, el modo CPU + GPU (texto en CPU) o CPU.': 'The GPU did not have enough memory to complete the image. Try a smaller size, CPU + GPU mode (text on CPU) or CPU.',
+  'Este modelo se descarga desde el catálogo.': 'This model is downloaded from the catalog.',
+  'No hay URL de descarga para las fuentes del modelo.': 'There is no download URL for the model sources.',
+  'El archivo descargado no coincide con el oficial. Se ha borrado para descargarlo de nuevo.': 'The downloaded file does not match the official one. It was deleted so it can be downloaded again.',
+  'No se pudo convertir el LoRA al formato del motor.': 'The LoRA could not be converted to the engine format.',
+  'Hash inesperado en el LoRA oficial': 'Unexpected hash in the official LoRA',
+  'Hash inesperado en el modelo base Q8_0': 'Unexpected hash in the Q8_0 base model',
+  'Se necesita la base Q8_0 o la base Q4_K para fusionar el LoRA': 'The Q8_0 or Q4_K base is required to merge the LoRA',
+  'La fusión no generó el modelo esperado.': 'The merge did not produce the expected model.',
+  'El modelo con LoRA fusionado no está instalado o no coincide.': 'The model with the merged LoRA is not installed or does not match.'
 };
 const SERVER_EN_RULES = [
   [/^Selección inválida para «(.+)»\.$/, 'Invalid selection for «$1».'],
@@ -234,7 +250,12 @@ const SERVER_EN_RULES = [
   [/ Cambiar de dispositivo requiere recargar los modelos\./g, ' Changing devices requires reloading the models.'],
   [/ Se cerró el motor para liberar su memoria; se cargará de nuevo al reintentar\./g, ' The engine was closed to free its memory; it will load again on the next attempt.'],
   [/ Se conservaron las (\d+) imágenes terminadas\./g, ' The $1 finished images were kept.'],
-  [/ Consulta logs\/engine\.err\.log para ver la causa\./g, ' Check logs/engine.err.log for the cause.']
+  [/ Consulta logs\/engine\.err\.log para ver la causa\./g, ' Check logs/engine.err.log for the cause.'],
+  [/^Espacio insuficiente: necesitas (\d+) GB libres y hay (\d+) GB\.$/, 'Not enough space: you need $1 GB free and there are $2 GB.'],
+  [/^Descarga incompleta \((\d+) de (\d+) bytes\)\. Reintenta para reanudar\.$/, 'Incomplete download ($1 of $2 bytes). Retry to resume.'],
+  [/^curl terminó con código (\d+)\. Reintenta para reanudar la descarga\.$/, 'curl exited with code $1. Retry to resume the download.'],
+  [/^La fusión del modelo terminó con código (\d+)\. Revisa logs\/engine\.err\.log\.$/, 'The model merge exited with code $1. Check logs/engine.err.log.'],
+  [/^Falta el LoRA oficial /, 'Missing the official LoRA ']
 ];
 const SERVER_EN_ENTRIES = Object.entries(SERVER_EN).sort((a, b) => b[0].length - a[0].length);
 const ROLE_LABEL_EN = {
@@ -503,9 +524,9 @@ try{if(localStorage.getItem('turbo.theme')==='dark')document.body.classList.add(
 try{if(localStorage.getItem('turbo.modelVersion')!=='0.2.1'){$('#steps').value=6;localStorage.setItem('turbo.modelVersion','0.2.1');}}catch{}
 
 /* ---------------- Model manager ---------------- */
-const models={open:false,data:null,applying:false,confirm:null,hadPending:false,timer:null};
+const models={open:false,data:null,applying:false,confirm:null,hadPending:false,timer:null,reinstall:null};
 const sizeLabel=bytes=>bytes==null?'—':bytes>=1024**3?(bytes/1024**3).toFixed(2)+' GB':Math.max(1,Math.round(bytes/1024**2))+' MB';
-const downloadStateLabel=()=>({queued:t('downloadQueued'),downloading:t('downloadDownloading'),verifying:t('downloadVerifying'),converting:t('downloadConverting'),done:t('downloadDone'),cancelled:t('downloadCancelled'),error:t('downloadError')});
+const downloadStateLabel=()=>({queued:t('downloadQueued'),downloading:t('downloadDownloading'),verifying:t('downloadVerifying'),converting:t('downloadConverting'),merging:t('downloadMerging'),done:t('downloadDone'),cancelled:t('downloadCancelled'),error:t('downloadError')});
 function modelMessage(text,error=false){const box=$('#modelsNotice');box.hidden=!text;box.textContent=serverText(text||'');box.classList.toggle('error',!!error);}
 function modelBadge(text,kind=''){const span=document.createElement('span');span.className='model-badge'+(kind?' '+kind:'');span.textContent=text;return span;}
 function activeItem(role){return models.data?models.data.items.find(item=>item.role===role&&item.active)||null:null;}
@@ -549,9 +570,9 @@ function modelRow(item,role){
   if(data.pending?.[role.id]===item.id)name.append(modelBadge(t('modelBadgePending'),'pending'));
   if(item.installed&&!item.active)name.append(modelBadge(t('modelBadgeInstalled')));
   if(item.local)name.append(modelBadge(t('modelBadgeLocal')));
-  if(!item.installed&&!item.downloadable)name.append(modelBadge(t('modelBadgeUnavailable'),'warn'));
+  if(!item.installed&&!item.downloadable&&!item.local)name.append(modelBadge(t('modelBadgeUnavailable'),'warn'));
   const detail=document.createElement('small');detail.textContent=localItem(item,'detail');info.append(name,detail);
-  if(state&&['queued','downloading','verifying','converting','error'].includes(state.state)){
+  if(state&&['queued','downloading','verifying','converting','merging','error'].includes(state.state)){
     const line=document.createElement('div');line.className='model-progress-line';
     const text=document.createElement('span');text.textContent=downloadStateLabel()[state.state]+(state.state==='downloading'&&state.total?' · '+t('modelDownloadingOf',{a:sizeLabel(state.received),b:sizeLabel(state.total)}):'');
     line.append(text);
@@ -565,12 +586,17 @@ function modelRow(item,role){
   if(models.confirm===item.id){
     const question=document.createElement('span');question.className='model-confirm-text';question.textContent=item.local?t('modelConfirmLocal'):t('modelConfirmDisk');
     actions.append(question,modelActionButton(t('modelYesDelete'),'secondary danger',()=>deleteModel(item)),modelActionButton(t('modelNo'),'secondary',()=>{models.confirm=null;renderModels();}));
-  }else if(state&&['queued','downloading'].includes(state.state)){
-    actions.append(modelActionButton(t('modelCancelDownload'),'secondary',()=>cancelModel(item)));
+  }else if(state&&['queued','downloading','merging'].includes(state.state)){
+    const rebuilding=models.reinstall===item.id||state.state==='merging';
+    actions.append(modelActionButton(rebuilding?t('modelCancelRebuild'):t('modelCancelDownload'),'secondary',()=>cancelModel(item)));
   }else if(state&&['verifying','converting'].includes(state.state)){
     actions.append(modelActionButton(t('modelVerifying'),'secondary',()=>{},true));
   }else if(item.active&&item.installed){
     // The active variant is shown by its badge and offers no actions.
+  }else if(!item.installed&&item.local){
+    const reinstall=modelActionButton(t('modelReinstall'),'secondary',()=>reinstallModel(item),busy||!item.canReinstall);
+    if(!item.canReinstall&&busy)reinstall.title=t('modelBusyTitle');
+    actions.append(reinstall);
   }else if(!item.installed&&item.downloadable){
     actions.append(modelActionButton(t('modelDownload'),'secondary',()=>downloadModel(item),!item.canDownload));
   }else if(item.installed){
@@ -598,6 +624,12 @@ function renderModelsFooter(){
 async function refreshModels(){
   try{
     const data=await api('/api/models');models.data=data;if(!models.applying){state.modelsBusy=!!(data.downloading||data.pending);refreshForm();}
+    if(models.reinstall){
+      const target=data.items.find(entry=>entry.id===models.reinstall);
+      if(target?.installed){models.reinstall=null;warmedKey=null;if(models.open)modelMessage(t('modelReinstallDone',{name:target.short}));}
+      else if(target?.state?.state==='error'){models.reinstall=null;if(models.open)modelMessage(target.state.error,true);}
+      else if(target?.state?.state==='cancelled')models.reinstall=null;
+    }
     if(data.pending)models.hadPending=true;
     else if(models.hadPending){
       models.hadPending=false;
@@ -635,8 +667,17 @@ async function downloadModel(item){
   try{await api('/api/models/download',{method:'POST',body:JSON.stringify({id:item.id})});state.modelsBusy=true;refreshForm();modelMessage(t('modelDownloadStart',{name:item.short}));await refreshModels();scheduleModelPoll(600);}
   catch(error){modelMessage(error.message,true);}
 }
+async function reinstallModel(item){
+  if(!confirm(t('modelReinstallConfirm',{name:item.short})))return;
+  try{
+    await api('/api/models/reinstall',{method:'POST',body:JSON.stringify({id:item.id})});
+    state.modelsBusy=true;models.reinstall=item.id;refreshForm();
+    modelMessage(t('modelReinstallStart',{name:item.short}));await refreshModels();scheduleModelPoll(700);
+  }catch(error){modelMessage(error.message,true);}
+}
 async function cancelModel(item){
-  try{await api('/api/models/cancel',{method:'POST',body:JSON.stringify({id:item.id})});modelMessage(t('modelCancelMsg',{name:item.short}));await refreshModels();}
+  const rebuilding=models.reinstall===item.id||item.state?.state==='merging';
+  try{await api('/api/models/cancel',{method:'POST',body:JSON.stringify({id:item.id})});modelMessage(t(rebuilding?'modelCancelRebuildMsg':'modelCancelMsg',{name:item.short}));await refreshModels();}
   catch(error){modelMessage(error.message,true);}
 }
 async function deleteModel(item){
