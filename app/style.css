@@ -9,6 +9,7 @@
 body.dark{--chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='5' viewBox='0 0 9 5'%3E%3Cpath d='M0 0h9L4.5 5Z' fill='%23aaa5b7'/%3E%3C/svg%3E")}
 select{appearance:none;-webkit-appearance:none;background-image:var(--chevron);background-repeat:no-repeat;background-position:right 13px center;background-size:9px 5px;padding-right:34px}
 .number-toggle{font-size:0;background-image:var(--chevron);background-repeat:no-repeat;background-position:center;background-size:9px 5px}
+#random svg{display:block;width:20px;height:20px}
 .two-col label>.number-combo{margin-top:7px}.seed-row>.number-combo{min-width:0}.selection-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 18px;color:var(--muted);font-size:11px}.selection-bar label,.image-selection{display:flex;align-items:center;gap:7px}.selection-bar button{margin-left:auto}.selection-bar input,.image-selection input{accent-color:var(--purple);width:16px;height:16px}.image-selection{font-size:10px;padding:8px 4px;color:var(--muted);cursor:pointer}.gallery-card.checked{outline:2px solid var(--purple);outline-offset:4px;border-radius:9px}
 
 /* ---------------- Model manager ---------------- */
