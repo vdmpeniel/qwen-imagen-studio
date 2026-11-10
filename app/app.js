@@ -1,6 +1,6 @@
 'use strict';
 const $ = s => document.querySelector(s);
-const state = { refs: [], gallery: [], selected: null, job: null, ready: false, loading: false, modelsBusy: false, polling: false, deleting: false, checked: new Set(), hardware: null };
+const state = { refs: [], gallery: [], selected: null, job: null, ready: false, loading: false, modelsBusy: false, modelsReady: false, polling: false, deleting: false, checked: new Set(), hardware: null };
 const LANG_KEY = 'turbo.lang';
 let lang = 'es';
 try { if (localStorage.getItem(LANG_KEY) === 'en') lang = 'en'; } catch {}
@@ -90,6 +90,7 @@ const TEXT = {
   stepsHintOk: ['6 pasos · configuración recomendada para Viggle v0.2.1.', '6 steps · recommended setting for Viggle v0.2.1.'],
   stepsHintCustom: ['Modo experimental: usa 6 pasos para v0.2.1. Se conservan los nodos de entrenamiento al añadir pasos; menos de 4 no está recomendado.', 'Experimental mode: use 6 steps for v0.2.1. Training nodes are preserved when adding steps; fewer than 4 is not recommended.'],
   generateWaitDownloads: ['Espera a que terminen las descargas y la recarga de modelos.', 'Wait for downloads and model reloading to finish.'],
+  generateWaitModels: ['Descarga los modelos de la configuración activa para crear imágenes.', 'Download the models of the active configuration to create images.'],
   generateWaitLoading: ['Espera a que el motor termine de cargar los modelos.', 'Wait for the engine to finish loading the models.'],
   computeAutoHint: ['Automático usa GPU con una tarjeta dedicada, CPU + GPU con una GPU integrada y CPU si no hay GPU compatible.', 'Automatic uses the GPU with a dedicated card, CPU + GPU with an integrated GPU, and CPU when no compatible GPU is available.'],
   computeCpuHint: ['Todo el cálculo se realiza en CPU. Puede tardar varios minutos o más. Empieza con 512 × 512 y 6 pasos. 0 hilos = automático.', 'All computation runs on the CPU. It may take several minutes or more. Start with 512 × 512 and 6 steps. 0 threads = automatic.'],
@@ -364,8 +365,8 @@ function refreshForm() {
   $('#canvasSize').textContent = `${s.width} × ${s.height}`; $('#megapixels').textContent = `${(s.width*s.height/1e6).toFixed(2)} MP`;
   document.querySelectorAll('.preset').forEach(b => b.classList.toggle('active', +b.dataset.w === s.width && +b.dataset.h === s.height));
   $('#stepsHint').textContent = t(s.steps === 6 ? 'stepsHintOk' : 'stepsHintCustom');
-  $('#generate').disabled = !!state.job || !state.ready || state.modelsBusy || state.loading;
-  $('#generate').title = state.modelsBusy ? t('generateWaitDownloads') : state.loading ? t('generateWaitLoading') : '';
+  $('#generate').disabled = !!state.job || !state.ready || !state.modelsReady || state.loading || models.applying;
+  $('#generate').title = !state.modelsReady ? t('generateWaitModels') : state.loading || models.applying ? t('generateWaitLoading') : '';
   syncStatusActivity();
   $('#compute').disabled=!!state.job;$('#fastAttention').disabled=!!state.job;
   const computeHint = { auto: t('computeAutoHint'), cpu: t('computeCpuHint'), gpu: t('computeGpuHint'), hybrid: t('computeHybridHint') }[$('#compute').value] || '';
@@ -487,16 +488,16 @@ async function followJob(id) {
   catch(e){state.job=null;$('#working').hidden=true;notice(t('jobPollError',{error:e.message}),true);}
   finally{state.polling=false;refreshForm();}
 }
-$('#form').onsubmit=async e=>{e.preventDefault();if(state.job||state.modelsBusy||state.loading){refreshForm();return;}$('#generate').disabled=true;$('#notice').hidden=true;try{const job=await api('/api/jobs',{method:'POST',body:JSON.stringify({...settings(),refs:state.refs})});showJob(job);void followJob(job.id);}catch(e){notice(e.message,true);refreshForm();}};
+$('#form').onsubmit=async e=>{e.preventDefault();if(state.job||!state.modelsReady||state.loading||models.applying){refreshForm();return;}$('#generate').disabled=true;$('#notice').hidden=true;try{const job=await api('/api/jobs',{method:'POST',body:JSON.stringify({...settings(),refs:state.refs})});showJob(job);void followJob(job.id);}catch(e){notice(e.message,true);refreshForm();}};
 $('#cancel').onclick=async()=>{if(!state.job)return;try{const job=await api(`/api/jobs/${state.job.id}/cancel`,{method:'POST',body:'{}'});showJob(job);}catch(e){notice(e.message,true);}};
-document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();if(state.ready&&!state.job&&!state.modelsBusy&&!state.loading)$('#form').requestSubmit();}});
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();if(state.ready&&state.modelsReady&&!state.job&&!state.loading&&!models.applying)$('#form').requestSubmit();}});
 let statusTimer = null;
-async function status() {let loading=false;try{const s=await api('/api/status');state.ready=s.ready;state.modelsBusy=!!s.modelsBusy;loading=!!s.compute?.loading;state.loading=loading;
+async function status() {let loading=false;try{const s=await api('/api/status');state.ready=s.ready;state.modelsBusy=!!s.modelsBusy;state.modelsReady=s.modelsReady??(!!s.model&&!/incompleta/.test(s.model));loading=!!s.compute?.loading;state.loading=loading;
 if(s.compute?.hardware){const h=s.compute.hardware,first=!state.hardware;state.hardware=h;const gpuText=h.gpus.length?'GPU: '+h.gpus.map(g=>g.name+(g.integrated?' '+t('hwGpuIntegrated'):'')).join(', '):t('hwNoGpu');$('#hardwareInfo').textContent=`${h.cpuName} · ${t('hwThreads',{n:h.logicalCores})} · ${h.ramGB} GB RAM. ${gpuText}`;for(const o of $('#compute').options)o.disabled=!h.modes.includes(o.value);
 $('#fastAttention').closest('label').hidden=!h.gpus.some(g=>/^cuda/i.test(g.id));
 $('#engineInfo').textContent=serverText(s.model)+' · '+(s.loraApplication==='merged'?t('engineMerged'):s.loraApplication==='runtime'?t('engineRuntime'):'')+t('engineTail');
 if(first)warmEngine();}
-const current=s.compute?.current;$('#status').classList.toggle('ready',s.ready&&!loading&&!state.modelsBusy);$('#statusText').textContent=state.modelsBusy?t('statusDownloading'):s.ready?(loading?t('statusLoadingModels'):current?t('statusEngineReady',{mode:({cpu:'CPU',gpu:'GPU',hybrid:'CPU + GPU'}[current.mode]||current.mode)}):t('statusReady')):t('statusDetecting');if(s.active&&!state.job){showJob(s.active);void followJob(s.active.id);}}catch{state.ready=false;state.modelsBusy=false;state.loading=false;$('#status').classList.remove('ready');$('#statusText').textContent=t('statusDisconnected');}refreshForm();clearTimeout(statusTimer);statusTimer=setTimeout(status,loading||state.modelsBusy?1500:5000);}
+const current=s.compute?.current;$('#status').classList.toggle('ready',s.ready&&!loading&&state.modelsReady);$('#statusText').textContent=state.modelsBusy?t('statusDownloading'):s.ready?(loading?t('statusLoadingModels'):current?t('statusEngineReady',{mode:({cpu:'CPU',gpu:'GPU',hybrid:'CPU + GPU'}[current.mode]||current.mode)}):t('statusReady')):t('statusDetecting');if(s.active&&!state.job){showJob(s.active);void followJob(s.active.id);}}catch{state.ready=false;state.modelsBusy=false;state.modelsReady=false;state.loading=false;$('#status').classList.remove('ready');$('#statusText').textContent=t('statusDisconnected');}refreshForm();clearTimeout(statusTimer);statusTimer=setTimeout(status,loading||state.modelsBusy?1500:5000);}
 
 const numberPresets={width:[512,768,1024,1152,1344,1536,2048],height:[512,768,864,1024,1152,1344,1536,2048],steps:[4,5,6,7,8,12,20,30,40],threads:[0,2,4,8,12,16,24,32],seed:[-1,0,42,12345,424242]};
 const numberLabelKeys={width:'width',height:'height',steps:'steps',seed:'seed',threads:'threads'};
