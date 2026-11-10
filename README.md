@@ -10,7 +10,7 @@
 
 - **Texto → imagen** y **edición con hasta 2 imágenes de referencia** («pon el zorro de la imagen 1 en…»).
 - **CPU, GPU NVIDIA (CUDA), GPU AMD/Intel (Vulkan) o CPU + GPU.** El modo automático elige lo más rápido para tu equipo, también en portátiles con GPU integrada o en PCs sin tarjeta gráfica.
-- **Todo local y privado:** los prompts, referencias e imágenes no salen del equipo. Internet solo se usa durante la instalación.
+- **Todo local y privado:** los prompts, referencias e imágenes no salen del equipo. Internet solo se usa para descargar motores y modelos (durante la instalación o desde el gestor de modelos).
 - Formatos 1:1, 16:9, 9:16, 4:3 o tamaño libre de 256 a 2048 px; lotes de 1 a 8 imágenes; semillas reproducibles; fondo transparente.
 - **Biblioteca local** con cada imagen y sus parámetros (PNG + JSON), reutilización de ajustes, descarga y borrado con papelera.
 - Instalador que **descarga y verifica automáticamente** todo lo necesario: motores, modelos y Node.js.
@@ -40,7 +40,7 @@ No necesitas instalar Python ni Node.js: el instalador usa tu Node.js 22+ o desc
 
 ## Instalación paso a paso
 
-1. **Descarga la app.** Clona esta rama en una carpeta con al menos 25 GB libres:
+1. **Descarga la app.** En esta página pulsa **Code → Download ZIP** y descomprímelo en una carpeta con al menos 25 GB libres, por ejemplo `~/qwen-imagen-studio`. También puedes clonar esta rama:
    ```bash
    git clone --branch linux-based https://github.com/vdmpeniel/qwen-imagen-studio.git
    cd qwen-imagen-studio
@@ -96,6 +96,22 @@ En **05 · Equipo de generación → Procesamiento**:
 
 **Atención rápida** (activada por defecto, solo NVIDIA) usa SageAttention: un 12 % más rápido con la misma composición y calidad; los detalles finos pueden variar ligeramente. Desactívala si quieres reproducir exactamente imágenes creadas sin ella.
 
+## Gestor de modelos
+
+El botón **⚙** de la cabecera abre **Piezas del motor**, donde puedes cambiar, descargar y borrar los cinco componentes de la generación:
+
+| Pieza | Opciones |
+| --- | --- |
+| Difusión | Modelos oficiales Viggle fusionados (Q4_K_M a Q8_0), el Q4_K fusionado local y bases Qwen Image 2.1 (Q2_K a Q8_0). |
+| Codificador de texto | Qwen3‑VL 8B en Q4_K_M, Q8_0, F16 y cuantizaciones pequeñas de unsloth (UD‑IQ2_XXS, Q2_K, Q3_K_S…). |
+| Proyector de visión | `mmproj` F16 u Q8_0. |
+| LoRA Turbo | r256 o r128; solo se aplica con modelos de difusión «base». |
+| VAE | Versión oficial bf16. |
+
+Cada fila indica el tamaño y si está instalada. El botón **Descargar** reanuda descargas interrumpidas y verifica el SHA-256 oficial antes de dar el archivo por bueno. Cuando una variante ya está descargada muestra **Activar** y **Borrar**: al pulsar **Activar** esa pieza pasa a usarse al momento y el motor se recarga solo; la variante que estaba activa vuelve a mostrar **Activar** y **Borrar**, y la nueva queda marcada como **Activa** sin botones. Si al activar falta alguna pieza de la configuración, se descarga y se aplica automáticamente al terminar; puedes cerrar la ventana. Mientras un modelo se descarga puedes seguir activando o borrando otras piezas: solo la fila en descarga muestra **Cancelar descarga**. No se puede borrar el modelo activo ni la última opción instalada de una pieza. Los archivos antiguos se conservan hasta que los borres.
+
+Para equipos con 10 GB de RAM, la combinación más ligera es difusión **Q2_K** (2,56 GB) + LoRA **r128** (0,68 GB) + codificador **UD‑IQ2_XXS** (2,61 GB) + `mmproj` **Q8_0** (0,75 GB) + VAE (0,68 GB), unos 7,3 GB en total. Aun así, la GPU integrada puede quedarse sin memoria: usa **CPU + GPU** o **CPU** si ocurre.
+
 ## Rendimiento de referencia
 
 Portátil con Ryzen 7 8845HS, 32 GB de RAM y RTX 4070 Laptop de 8 GB, 6 pasos:
@@ -115,7 +131,7 @@ Los detalles de cada optimización y cómo se midieron están en [docs/TECNICO.m
 | Síntoma | Solución |
 | --- | --- |
 | «Descarga interrumpida» durante la instalación | Vuelve a ejecutar el instalador: reanuda la descarga. |
-| «Falta …. Ejecuta ./instalar.sh» al iniciar | La instalación no terminó; ejecuta de nuevo el instalador. |
+| «Falta …. Ejecuta ./instalar.sh» al iniciar | La instalación no terminó; ejecuta de nuevo el instalador o abre el **gestor de modelos ⚙** para descargar la pieza que falte. |
 | «La GPU no tuvo memoria suficiente» | Usa un tamaño menor, el modo **CPU + GPU** o **CPU**, y cierra otros programas que usen la GPU. |
 | «No quedó suficiente memoria RAM» | Cierra aplicaciones pesadas o reduce el tamaño de la imagen. |
 | No aparece mi GPU | Actualiza el controlador (NVIDIA, AMD o Intel), instala `libvulkan1` y vuelve a abrir la app. |
@@ -126,7 +142,7 @@ Los registros están en la carpeta `logs/` (`engine.err.log`, `engine.out.log`, 
 ## Actualizar o desinstalar
 
 - **Actualizar:** descarga la nueva versión encima de la carpeta (o `git pull`) y ejecuta de nuevo el instalador; solo descarga lo que haya cambiado.
-- **Desinstalar:** ejecuta `./detener.sh` y borra la carpeta. Guarda antes tus imágenes de `outputs/` si las quieres conservar. La app no escribe fuera de su carpeta.
+- **Desinstalar:** ejecuta `./desinstalar.sh`. Detiene la app y borra los motores, los modelos descargados, Node.js portable, los registros y las descargas temporales; antes te pide confirmación. Conserva tus imágenes de `outputs/` y el código de la app. Si quieres borrarlo todo, elimina la carpeta después. La app no escribe fuera de su carpeta.
 
 ## Estructura del proyecto
 
@@ -137,7 +153,7 @@ docs/                 Documentación técnica y capturas
 qa/optimizacion/      Mediciones usadas para elegir la configuración del motor
 models/               Licencia y aviso de los modelos (los pesos los descarga el instalador)
 model-config.json     Versiones, revisiones y hashes fijados de los modelos
-*.sh                  Instalar, iniciar y detener desde la terminal
+*.sh                  Instalar, iniciar, detener y desinstalar desde la terminal
 ```
 
 Carpetas creadas por el instalador y la app (no forman parte del repositorio): `models/` (pesos), `runtime-*` (motores), `node/`, `outputs/`, `logs/` y `.downloads/`.

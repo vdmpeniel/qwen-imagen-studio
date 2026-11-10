@@ -2,20 +2,18 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer } from 'node:net';
 import { cpus, totalmem } from 'node:os';
-import { existsSync, openSync, closeSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, openSync, closeSync } from 'node:fs';
 import { writeFile, appendFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { MODEL, mergedProofValid } from './core.mjs';
+import { MODEL } from './core.mjs';
+import { resolveActive, tryResolveActive } from './model-selection.mjs';
 const exec=promisify(execFile), root=resolve(import.meta.dirname,'..');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export function parseDevices(stdout,runtime){return stdout.split(/\r?\n/).flatMap(line=>{const m=/^(CPU|CUDA\d+|Vulkan\d+)\t(.+)$/i.exec(line.trim());return m?[{id:m[1],name:m[2],runtime,cpu:m[1].toLowerCase()==='cpu'}]:[];});}
-// Transformer with the LoRA fused by scripts/merge-lora.mjs. Without it, the LoRA is applied at runtime.
+// The active selection decides whether the transformer already carries the LoRA.
 export function mergedModel(){
-  try{
-    const proof=JSON.parse(readFileSync(resolve(root,'models/merged-lora.json'),'utf8')), file=resolve(root,'models',MODEL.merged);
-    const valid=mergedProofValid(proof)&&statSync(file).size===proof.outputBytes;
-    return valid?file:null;
-  }catch{return null;}
+  const active=tryResolveActive();
+  return active?.merged?active.diffusionPath:null;
 }
 const DEDICATED=/geforce|rtx|quadro|tesla|radeon (rx|pro)|arc(\(tm\))? [ab]\d/i;
 export function chooseMode(requested,hardware){
@@ -25,26 +23,40 @@ export function chooseMode(requested,hardware){
   const mode=requested==='auto'?(!gpu?'cpu':gpu.integrated?'hybrid':'gpu'):requested;
   if(!['cpu','gpu','hybrid'].includes(mode))throw new Error('Modo de cálculo inválido.');
   if(mode!=='cpu'&&!gpu)throw new Error('No hay GPU compatible disponible. Selecciona CPU o Automático.');
-  if(mode==='cpu'&&!hardware.cpuAvailable)throw new Error('Falta el motor CPU. Ejecuta el instalador con -Backend cpu.');
+  if(mode==='cpu'&&!hardware.cpuAvailable)throw new Error('Falta el motor CPU. Ejecuta "./instalar.sh".');
   // Hybrid keeps only the text encoder on CPU; the VAE on CPU took minutes per 1024 px image.
   return {mode,runtime:mode==='cpu'?MODEL.runtimeCpu:gpu.runtime,device:mode==='cpu'?'CPU':gpu.id,backend:mode==='cpu'?'cpu':mode==='hybrid'?`all=cpu,diffusion=${gpu.id},vae=${gpu.id}`:gpu.id};
 }
 // Measured on RTX 4070 Laptop 8 GB, 1024x1024, 6 steps: weights streamed from disk 58 s; weights in RAM 30 s;
 // + direct-convolution VAE without tiles 27 s; + merged LoRA (transformer resident in VRAM) see README.
-export function engineFeatures(selection,fastAttention=true){
+// Argument generation must stay usable by the documented tests without weights on disk.
+// The real start path resolves the active selection first and reports missing files.
+function legacyPaths(){
+  return {
+    diffusionPath:resolve(root,'models',MODEL.base),
+    llmPath:resolve(root,'models/Qwen3VL-8B-Instruct-Q4_K_M.gguf'),
+    mmprojPath:resolve(root,'models/mmproj-Qwen3VL-8B-Instruct-F16.gguf'),
+    vaePath:resolve(root,'models/qwen_image_2.1_vae_bf16.safetensors'),
+    runtimeLora:MODEL.runtimeLora,
+    merged:false,
+    selection:null
+  };
+}
+export function engineFeatures(selection,fastAttention=true,active=tryResolveActive()||legacyPaths()){
   const cuda=/^cuda/i.test(selection.device);
   return {
-    merged:!!mergedModel(),
+    merged:active.merged,
+    runtimeLora:active.runtimeLora,
+    selection:active.selection,
     attention:cuda&&fastAttention?'sage':'flash',
     // Direct 2D/3D convolutions: VAE decode 2.9x faster on CUDA, 1.6x on Vulkan, equal on CPU, far less memory.
     convDirect:true,
     weights:selection.mode==='cpu'?'mmap':'ram'
   };
 }
-export function engineArgs(selection,threads,port,features=engineFeatures(selection)){
-  const merged=features.merged&&mergedModel();
-  const args=['--diffusion-model',merged||resolve(root,'models',MODEL.base),'--llm',resolve(root,'models/Qwen3VL-8B-Instruct-Q4_K_M.gguf'),'--llm_vision',resolve(root,'models/mmproj-Qwen3VL-8B-Instruct-F16.gguf'),'--vae',resolve(root,'models/qwen_image_2.1_vae_bf16.safetensors'),'--backend',selection.backend,'--threads',String(threads||-1),'--cfg-scale','1','--sampling-method','euler','--listen-ip','127.0.0.1','--listen-port',String(port),'--log-level','info'];
-  if(!merged)args.push('--lora-model-dir',resolve(root,'models/loras'),'--lora-apply-mode','at_runtime');
+export function engineArgs(selection,threads,port,features=engineFeatures(selection),active=tryResolveActive()||legacyPaths()){
+  const args=['--diffusion-model',active.diffusionPath,'--llm',active.llmPath,'--llm_vision',active.mmprojPath,'--vae',active.vaePath,'--backend',selection.backend,'--threads',String(threads||-1),'--cfg-scale','1','--sampling-method','euler','--listen-ip','127.0.0.1','--listen-port',String(port),'--log-level','info'];
+  if(!active.merged)args.push('--lora-model-dir',resolve(root,'models/loras'),'--lora-apply-mode','at_runtime');
   args.push(features.attention==='sage'?'--sage-attn':'--diffusion-fa');
   if(features.convDirect)args.push('--vae-conv-direct');
   // CPU reads the weights in place from the OS file cache, as llama.cpp does by default.
@@ -56,7 +68,7 @@ export async function assertPortFree(port){
   await new Promise((ok,bad)=>{const probe=createServer();probe.once('error',()=>bad(new Error('El puerto del motor está ocupado por otra instancia. Ciérrala antes de generar.')));probe.listen(port,'127.0.0.1',()=>probe.close(ok));});
 }
 export class EngineManager {
-  constructor(port){this.port=port;this.child=null;this.current=null;this.loading=false;this.error=null;this.hardware=null;this.queue=Promise.resolve();this.detection=this.detect();}
+  constructor(port){this.port=port;this.child=null;this.current=null;this.loading=false;this.error=null;this.hardware=null;this.queue=Promise.resolve();this.lastRequest=null;this.detection=this.detect();}
   async detect(){
     const runs=await Promise.all([MODEL.runtimeCpu,MODEL.runtime,MODEL.runtimeVulkan].filter(Boolean).map(async runtime=>{
       const exe=resolve(root,runtime,'sd-server');if(!existsSync(exe))return [];
@@ -77,14 +89,17 @@ export class EngineManager {
   // Starts the engine and loads the weights before the first image, while the user writes the prompt.
   warm(requested,threads=0,fastAttention=true){return this.ensure(requested,threads,fastAttention).catch(()=>null);}
   async start(requested,threads,fastAttention){
-    const hardware=await this.detection;const selection=chooseMode(requested,hardware);const features=engineFeatures(selection,fastAttention);
-    const key=JSON.stringify([selection.mode,selection.device,threads,features]);
-    if(this.child&&this.current?.key===key&&this.child.exitCode===null&&this.child.signalCode===null)return this.current;
+    const hardware=await this.detection;const selection=chooseMode(requested,hardware);
     this.loading=true;this.error=null;
     try{
+      const active=resolveActive();
+      const features=engineFeatures(selection,fastAttention,active);
+      this.lastRequest={requested,threads,fastAttention};
+      const key=JSON.stringify([selection.mode,selection.device,threads,features]);
+      if(this.child&&this.current?.key===key&&this.child.exitCode===null&&this.child.signalCode===null)return this.current;
       await this.stop();
       await assertPortFree(this.port);
-      const exe=resolve(root,selection.runtime,'sd-server'), args=[...engineArgs(selection,threads,this.port,features),'--eager-load'];
+      const exe=resolve(root,selection.runtime,'sd-server'), args=[...engineArgs(selection,threads,this.port,features,active),'--eager-load'];
       await appendFile(resolve(root,'logs/engine.out.log'),`\n[Qwen Studio ${new Date().toISOString()}] mode=${selection.mode} backend=${selection.backend} threads=${threads} runtime=${selection.runtime} features=${JSON.stringify(features)}\n`);
       const out=openSync(resolve(root,'logs/engine.out.log'),'a'),err=openSync(resolve(root,'logs/engine.err.log'),'a');
       const child=spawn(exe,args,{cwd:root,stdio:['ignore',out,err]});closeSync(out);closeSync(err);this.child=child;

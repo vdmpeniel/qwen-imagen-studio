@@ -19,7 +19,7 @@ Navegador (app/)  ──HTTP──▶  Servidor Node (scripts/server.mjs, 127.0.
 - `scripts/core.mjs`: validación de peticiones, planificador Turbo (sigmas), carga útil del motor y política del VAE.
 - `scripts/engine-manager.mjs`: detección de hardware, modo automático, argumentos del motor por modo y arranque serializado.
 - `scripts/merge-lora.mjs` + `scripts/gguf.mjs`: creación del modelo optimizado (LoRA fusionado).
-- `scripts/install.sh`, `start.sh`, `stop.sh`, `common.sh`: instalación y ciclo de vida en Linux.
+- `scripts/install.sh`, `scripts/start.sh`, `scripts/stop.sh`, `scripts/common.sh`: instalación y ciclo de vida en Linux.
 - `scripts/build-cuda.sh`: compila `sd-server` con CUDA bajo demanda (sin binario precompilado Linux para esta revisión).
 
 ## Rendimiento
@@ -86,7 +86,16 @@ Comunes: `--vae-conv-direct`, `--eager-load`, `--diffusion-fa` (o `--sage-attn` 
 | `mmproj-Qwen3VL-8B-Instruct-F16.gguf` | 1,2 GB | Mismo repositorio Qwen (lectura de imágenes de referencia) |
 | `qwen_image_2.1_vae_bf16.safetensors` | 0,7 GB | VAE de Qwen-Image 2.1 publicado por [Comfy-Org](https://huggingface.co/Comfy-Org/Qwen-Image-2.1) |
 
-Todas las revisiones y SHA256 están fijados en `model-config.json` y en `scripts/install.sh`. Los motores `stable-diffusion.cpp` están fijados en la versión `88411ef`.
+Todas las revisiones y SHA256 están fijados en `model-config.json`, en `scripts/model-catalog.json` y en `scripts/install.sh`. Los motores `stable-diffusion.cpp` están fijados en la versión `88411ef`.
+
+## Gestor de modelos
+
+La app permite cambiar cada pieza sin reinstalar. `scripts/model-catalog.json` define las variantes disponibles (rol, archivo local, URL de Hugging Face, revisión, tamaño y SHA-256) y `scripts/model-selection.mjs` valida la selección contra ese catálogo; una petición nunca puede apuntar el motor a una ruta arbitraria.
+
+- La selección activa se guarda en `model-selection.json` (ignorado por git) y una activación con descargas pendientes en `model-selection.pending.json`. La pendiente solo se promueve cuando todas las piezas requeridas existen y verifican.
+- `scripts/model-downloader.mjs` descarga con `curl` a `<archivo>.part`, reanuda con `--continue-at -`, comprueba el SHA-256 en streaming y solo entonces renombra al nombre final. Los LoRA pasan después por `scripts/prepare-lora.mjs`.
+- `scripts/check-models.mjs` es la comprobación de arranque: `scripts/start.sh` la ejecuta antes de lanzar el servidor.
+- API: `GET /api/models`, `GET /api/models/status`, `POST /api/models/select`, `POST /api/models/download`, `POST /api/models/cancel` y `POST /api/models/delete`. Al activar una configuración distinta con el motor en marcha, el servidor lo detiene y lo precarga con la nueva selección; nunca cambia de modelo durante una generación.
 
 ## Notas Linux (rama `linux-based`)
 

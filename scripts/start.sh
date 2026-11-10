@@ -35,30 +35,17 @@ if curl -fsS --max-time 3 "$URL/api/status" 2>/dev/null | grep -q "qwen-turbo-lo
   exit 0
 fi
 
-cfg() {
-  python3 -c "import json;print(json.load(open('model-config.json'))['$1'])"
-}
-MERGED_FILE="$(cfg merged)"
-BASE_FILE="$(cfg base)"
-RUNTIME_LORA="$(cfg runtimeLora)"
-RUNTIME_CPU="$(cfg runtimeCpu)"
-
-# El transformer fusionado sustituye a la base Q4_K y al LoRA en ejecución.
-if python3 -c "import json;assert json.load(open('models/merged-lora.json'))['output']=='$MERGED_FILE'" 2>/dev/null \
-  && [ -f "models/$MERGED_FILE" ]; then
-  TRANSFORMER=("models/$MERGED_FILE")
-else
-  TRANSFORMER=("models/$BASE_FILE" "models/loras/$RUNTIME_LORA")
+# Misma validación que usa el servidor: todas las piezas de la selección activa
+# deben existir en disco antes de arrancar el motor.
+if ! "$NODE_BIN" "$PROJECT_ROOT/scripts/check-models.mjs"; then
+  echo 'Faltan modelos de la configuración activa. Ejecuta "./instalar.sh" para completarlos.' >&2
+  exit 1
 fi
-for rel in "${TRANSFORMER[@]}" \
-  "models/Qwen3VL-8B-Instruct-Q4_K_M.gguf" \
-  "models/mmproj-Qwen3VL-8B-Instruct-F16.gguf" \
-  "models/qwen_image_2.1_vae_bf16.safetensors"; do
-  if [ ! -f "$rel" ]; then
-    echo "Falta $rel. Ejecuta './instalar.sh'." >&2
-    exit 1
-  fi
-done
+
+cfg() {
+  "$NODE_BIN" -e "const c=require('./model-config.json');process.stdout.write(String(c[process.argv[1]] ?? ''))" "$1"
+}
+RUNTIME_CPU="$(cfg runtimeCpu)"
 if [ ! -x "$RUNTIME_CPU/sd-server" ]; then
   echo 'Falta el motor CPU. Ejecuta "./instalar.sh".' >&2
   exit 1
@@ -67,8 +54,11 @@ fi
 # Elimina solo un motor de este proyecto dejado por una salida interrumpida.
 ENGINE_RECORD="logs/engine-process.json"
 if [ -f "$ENGINE_RECORD" ]; then
-  PRIOR_PID="$(python3 -c "import json;print(json.load(open('$ENGINE_RECORD')).get('pid',''))" 2>/dev/null || true)"
-  PRIOR_EXE="$(python3 -c "import json;print(json.load(open('$ENGINE_RECORD')).get('executable',''))" 2>/dev/null || true)"
+  json_value() {
+    "$NODE_BIN" -e "try{const j=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(String(j[process.argv[2]]??''))}catch{}" "$1" "$2"
+  }
+  PRIOR_PID="$(json_value "$ENGINE_RECORD" pid)"
+  PRIOR_EXE="$(json_value "$ENGINE_RECORD" executable)"
   if [ -n "${PRIOR_PID:-}" ] && kill -0 "$PRIOR_PID" 2>/dev/null; then
     ACTUAL_EXE="$(readlink -f "/proc/$PRIOR_PID/exe" 2>/dev/null || true)"
     if [ "$ACTUAL_EXE" = "$PRIOR_EXE" ]; then

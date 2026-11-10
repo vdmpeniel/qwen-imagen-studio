@@ -41,14 +41,6 @@ NODE_VERSION="v24.21.0"
 NODE_TAR_URL="https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-x64.tar.xz"
 NODE_TAR_SHA="fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
 
-cfg() {
-  python3 -c "import json;print(json.load(open('model-config.json'))['$1'])"
-}
-RUNTIME_CPU="$(cfg runtimeCpu)"
-RUNTIME_VULKAN="$(cfg runtimeVulkan)"
-RUNTIME_CUDA="$(cfg runtime)"
-LORA_SHA="$(cfg loraSha256)"
-
 step() { echo; echo "== $1"; }
 
 sha_ok() { # sha_ok file expected
@@ -125,6 +117,14 @@ else
   NODE_BIN="$(get_app_node "$PROJECT_ROOT")"
   echo "Node.js portable instalado en node/ ($NODE_VERSION)"
 fi
+
+cfg() {
+  "$NODE_BIN" -e "const c=require('./model-config.json');process.stdout.write(String(c[process.argv[1]] ?? ''))" "$1"
+}
+RUNTIME_CPU="$(cfg runtimeCpu)"
+RUNTIME_VULKAN="$(cfg runtimeVulkan)"
+RUNTIME_CUDA="$(cfg runtime)"
+LORA_SHA="$(cfg loraSha256)"
 
 step "Dependencias del sistema (curl, unzip, libgomp1, libvulkan1)"
 if ! check_linux_deps; then
@@ -215,7 +215,7 @@ if [ "$MERGED" -eq 0 ]; then
     mv "$DOWNLOADED_LORA" "$LORA_DEST"
   fi
   download "$LORA_URL" "$LORA_DEST" "$LORA_SHA"
-  "$NODE_BIN" "$PROJECT_ROOT/scripts/prepare-lora.mjs"
+  "$NODE_BIN" "$PROJECT_ROOT/scripts/prepare-lora.mjs" lora-r256
 fi
 
 echo
