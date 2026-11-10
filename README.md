@@ -42,7 +42,7 @@ No necesitas instalar Python ni Node.js: el instalador usa tu Node.js 22+ o desc
 
 1. **Descarga la app.** Clona esta rama en una carpeta con al menos 25 GB libres:
    ```bash
-   git clone --branch linux-based https://github.com/jceronch1/qwen-imagen-studio.git
+   git clone --branch linux-based https://github.com/vdmpeniel/qwen-imagen-studio.git
    cd qwen-imagen-studio
    ```
    Evita carpetas sincronizadas con servicios en la nube: los modelos son archivos muy grandes.
