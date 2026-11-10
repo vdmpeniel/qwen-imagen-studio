@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { ROOT, getItem, itemPath, isInstalled, downloadUrl, runtimeLoraPath } from './model-selection.mjs';
+import { MODEL } from './core.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -32,6 +33,7 @@ export class ModelDownloader {
     this.queue = [];
     this.running = false;
     this.curl = null;
+    this.merge = null;
     this.onIdle = onIdle || (async () => {});
   }
 
@@ -74,6 +76,11 @@ export class ModelDownloader {
       this.curl.kill();
       return true;
     }
+    if (entry.state === 'merging' && this.merge) {
+      entry.cancelled = true;
+      this.merge.kill();
+      return true;
+    }
     if (['verifying', 'converting'].includes(entry.state)) return false;
     return false;
   }
@@ -113,6 +120,8 @@ export class ModelDownloader {
   }
 
   async download(entry, item) {
+    // The local merged variant is not downloaded: it is rebuilt from the pinned sources.
+    if (item.local) return this.rebuildMerged(entry, item);
     const target = itemPath(item);
     const part = target + '.part';
     await mkdir(dirname(target), { recursive: true });
@@ -142,7 +151,85 @@ export class ModelDownloader {
     await this.afterDownload(item);
   }
 
-  runCurl(url, part, entry) {
+  // The merged transformer is rebuilt locally: download the pinned Q8_0 base and LoRA
+  // (temporary, under .downloads) and fuse them into the Q4_K file the engine consumes.
+  async rebuildMerged(entry, item) {
+    const downloads = resolve(ROOT, '.downloads');
+    await mkdir(downloads, { recursive: true });
+    const base = getItem('diff-base-q8'), lora = getItem('lora-r256');
+    const basePath = resolve(downloads, MODEL.preciseBase);
+    const installedLora = resolve(ROOT, 'models', 'loras', MODEL.lora);
+    const loraPath = [resolve(downloads, MODEL.lora), installedLora].find(path => existsSync(path) && statSync(path).size === lora.bytes);
+    const baseReady = existsSync(basePath) && statSync(basePath).size === base.bytes;
+    const loraReady = !!loraPath;
+    const loraTarget = loraPath || resolve(downloads, MODEL.lora);
+    entry.received = 0;
+    entry.total = (loraReady ? 0 : lora.bytes) + (baseReady ? 0 : base.bytes);
+    let offset = 0;
+    if (!loraReady) {
+      await this.fetchSource(entry, downloadUrl(lora), loraTarget, lora.bytes, lora.sha256, offset);
+      offset += lora.bytes;
+    }
+    if (!baseReady) {
+      await this.fetchSource(entry, downloadUrl(base), basePath, base.bytes, base.sha256, offset);
+      offset += base.bytes;
+    }
+    entry.state = 'merging';
+    entry.total = Math.max(entry.total, 1);
+    entry.received = entry.total;
+    try {
+      await this.runMerge(entry, basePath);
+    } catch (error) {
+      await unlink(itemPath(item)).catch(() => {});
+      await unlink(itemPath(item) + '.tmp').catch(() => {});
+      throw error;
+    }
+    await unlink(resolve(downloads, MODEL.lora)).catch(() => {});
+    await unlink(basePath).catch(() => {});
+  }
+
+  async fetchSource(entry, url, target, bytes, sha256, offset) {
+    if (!url) throw new Error('No hay URL de descarga para las fuentes del modelo.');
+    const part = target + '.part';
+    await mkdir(dirname(target), { recursive: true });
+    if (existsSync(target)) {
+      if (statSync(target).size === bytes) {
+        entry.state = 'verifying';
+        if (await sha256File(target, read => { entry.received = offset + read; }) === sha256) return;
+      }
+      await unlink(target).catch(() => {});
+    }
+    if (existsSync(part)) entry.received = offset + statSync(part).size;
+    entry.state = 'downloading';
+    await this.runCurl(url, part, entry, offset, bytes);
+    if (entry.cancelled) throw new Cancelled();
+    const size = existsSync(part) ? statSync(part).size : 0;
+    if (size !== bytes) throw new Error(`Descarga incompleta (${size} de ${bytes} bytes). Reintenta para reanudar.`);
+    entry.state = 'verifying';
+    const hash = await sha256File(part, read => { entry.received = offset + read; });
+    if (hash !== sha256) {
+      await unlink(part).catch(() => {});
+      throw new Error('El archivo descargado no coincide con el oficial. Se ha borrado para descargarlo de nuevo.');
+    }
+    await rename(part, target);
+  }
+
+  runMerge(entry, basePath) {
+    return new Promise((done, reject) => {
+      const child = spawn(process.execPath, [resolve(ROOT, 'scripts', 'merge-lora.mjs'), basePath], { cwd: ROOT, stdio: 'ignore' });
+      this.merge = child;
+      let settled = false;
+      const finish = (fn, value) => { if (settled) return; settled = true; this.merge = null; fn(value); };
+      child.on('error', error => finish(reject, error));
+      child.on('exit', code => {
+        if (entry.cancelled) { finish(reject, new Cancelled()); return; }
+        if (code !== 0) { finish(reject, new Error(`La fusión del modelo terminó con código ${code}. Revisa logs/engine.err.log.`)); return; }
+        finish(done);
+      });
+    });
+  }
+
+  runCurl(url, part, entry, offset = 0, bytes = entry.total) {
     return new Promise((done, reject) => {
       const child = spawn('curl', [
         '--fail', '--location', '--silent', '--show-error', '--retry', '8', '--retry-delay', '1',
@@ -153,7 +240,7 @@ export class ModelDownloader {
       this.curl = child;
       let settled = false;
       const timer = setInterval(() => {
-        try { if (existsSync(part)) entry.received = statSync(part).size; } catch { /* transient */ }
+        try { if (existsSync(part)) entry.received = offset + statSync(part).size; } catch { /* transient */ }
       }, 400);
       const stop = () => { clearInterval(timer); this.curl = null; };
       child.on('error', error => { if (!settled) { settled = true; stop(); reject(error); } });
@@ -164,7 +251,7 @@ export class ModelDownloader {
         if (entry.cancelled) { reject(new Cancelled()); return; }
         if (code !== 0) {
           // 33: the server refused the resume range because the file is already complete.
-          if (code === 33 && existsSync(part) && statSync(part).size === entry.total) { done(); return; }
+          if (code === 33 && existsSync(part) && statSync(part).size === bytes) { done(); return; }
           reject(new Error(`curl terminó con código ${code}. Reintenta para reanudar la descarga.`));
           return;
         }

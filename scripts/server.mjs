@@ -82,6 +82,7 @@ async function modelsPayload() {
       installed,
       active: isActive,
       canDownload: !installed && !!downloadUrl(item) && !busylock,
+      canReinstall: !installed && !!item.local && !busylock,
       canDelete: installed && !deleteBlock,
       deleteBlock,
       state: downloader.stateOf(item.id)
@@ -101,7 +102,7 @@ async function modelsPayload() {
 async function deleteItemFiles(item) {
   const targets = [];
   if (item.role === 'lora') targets.push(runtimeLoraPath(item), loraProofPath(item), itemPath(item));
-  else if (item.local) targets.push(itemPath(item), resolve(root, 'models/merged-lora.json'));
+  // Keep merged-lora.json: it identifies the local merge so Reinstalar can rebuild it.
   else targets.push(itemPath(item));
   for (const target of targets) {
     await unlink(target).catch(error => { if (error.code !== 'ENOENT') throw error; });
@@ -241,6 +242,23 @@ const server = createServer(async (req,res) => {
       const disk = await diskInfo();
       if (disk && disk.freeBytes < item.bytes + 512 * 1024 * 1024) {
         return json(res,400,{error:`Espacio insuficiente: necesitas ${Math.ceil(item.bytes/1024**3)} GB libres y hay ${Math.floor(disk.freeBytes/1024**3)} GB.`});
+      }
+      const state = downloader.enqueue(item.id);
+      return json(res,202,{ queued:true, id:item.id, state });
+    }
+    if (req.method === 'POST' && path === '/api/models/reinstall') {
+      if (active || deleting) return json(res,409,{error:'Espera a que termine la generación en curso.'});
+      const body = await readBody(req), item = getItem(body?.id);
+      if (!item.local) return json(res,400,{error:'Este modelo se descarga desde el catálogo.'});
+      if (isInstalled(item)) return json(res,200,{ installed:true, id:item.id });
+      const current = downloader.stateOf(item.id);
+      if (current && ['queued','downloading','verifying','converting','merging'].includes(current.state)) {
+        return json(res,202,{ queued:true, id:item.id, state:current });
+      }
+      const disk = await diskInfo(), sources = getItem('diff-base-q8').bytes + getItem('lora-r256').bytes;
+      const needed = sources + item.bytes + 512 * 1024 * 1024;
+      if (disk && disk.freeBytes < needed) {
+        return json(res,400,{error:`Espacio insuficiente: necesitas ${Math.ceil(needed/1024**3)} GB libres y hay ${Math.floor(disk.freeBytes/1024**3)} GB.`});
       }
       const state = downloader.enqueue(item.id);
       return json(res,202,{ queued:true, id:item.id, state });
