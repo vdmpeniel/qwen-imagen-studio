@@ -74,7 +74,6 @@ async function modelsPayload() {
     const isActive = selection[item.role] === item.id && !(item.role === 'lora' && mergedActive);
     const deleteBlock = !installed ? null
       : busylock ? 'Espera a que termine la generación en curso.'
-      : downloader.busy ? 'Espera a que terminen las descargas en curso.'
       : isActive ? 'Es el modelo activo. Activa otra variante y aplica antes de borrarlo.'
       : installedCount(item.role) <= 1 ? 'Es la última opción instalada de esta pieza.'
       : null;
@@ -211,7 +210,6 @@ const server = createServer(async (req,res) => {
     }
     if (req.method === 'POST' && path === '/api/models/select') {
       if (active || deleting) return json(res,409,{error:'Espera a que termine la generación en curso.'});
-      if (downloader.busy) return json(res,409,{error:'Espera a que terminen las descargas en curso.'});
       const body = await readBody(req);
       const selection = normalizeSelection(body?.selection ?? body, { strict: true });
       const missing = missingRequired(selection);
@@ -254,13 +252,15 @@ const server = createServer(async (req,res) => {
     }
     if (req.method === 'POST' && path === '/api/models/delete') {
       if (active || deleting) return json(res,409,{error:'Espera a que termine la generación en curso.'});
-      if (downloader.busy) return json(res,409,{error:'Espera a que terminen las descargas antes de borrar modelos.'});
       const body = await readBody(req), item = getItem(body?.id), selection = readSelection();
       const loraNotUsed = item.role === 'lora' && getItem(selection.diffusion)?.kind === 'merged';
       if (selection[item.role] === item.id && !loraNotUsed) return json(res,409,{error:'Ese modelo está activo. Activa otro de la misma pieza antes de borrarlo.'});
       if (isInstalled(item) && installedCount(item.role) <= 1) return json(res,409,{error:'No puedes borrar la última opción instalada de esta pieza.'});
+      // A pending activation that relied on this file can no longer complete.
+      const pending = readPending(), pendingCleared = !!pending && pending[item.role] === item.id;
+      if (pendingCleared) await clearPending();
       const files = await deleteItemFiles(item);
-      return json(res,200,{ deleted:true, id:item.id, files });
+      return json(res,200,{ deleted:true, id:item.id, files, pendingCleared });
     }
     if (req.method === 'POST' && path === '/api/engine/warmup') {
       if (!manager) return json(res,200,{managed:false});

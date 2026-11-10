@@ -204,7 +204,8 @@ function renderModels(){
 }
 function modelRow(item,role){
   const data=models.data,state=item.state;
-  const busy=models.applying||!!data.jobActive||!!data.downloading;
+  // A download in another row does not block activating or deleting this one.
+  const busy=models.applying||!!data.jobActive;
   const loraBlocked=role.id==='lora'&&activeItem('diffusion')?.kind==='merged';
   const row=document.createElement('div');row.className='model-row'+(item.installed?'':' missing')+(item.active?' is-active':'');
   const info=document.createElement('div');info.className='model-info';
@@ -303,7 +304,8 @@ async function cancelModel(item){
 }
 async function deleteModel(item){
   try{
-    await api('/api/models/delete',{method:'POST',body:JSON.stringify({id:item.id})});models.confirm=null;modelMessage(`${item.short} se borró del disco.`);await refreshModels();
+    const result=await api('/api/models/delete',{method:'POST',body:JSON.stringify({id:item.id})});models.confirm=null;
+    modelMessage(`${item.short} se borró del disco.${result.pendingCleared?' La activación pendiente se canceló.':''}`);await refreshModels();
   }
   catch(error){modelMessage(error.message,true);}
 }
