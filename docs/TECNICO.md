@@ -19,7 +19,7 @@ Navegador (app/)  ──HTTP──▶  Servidor Node (scripts/server.mjs, 127.0.
 - `scripts/core.mjs`: validación de peticiones, planificador Turbo (sigmas), carga útil del motor y política del VAE.
 - `scripts/engine-manager.mjs`: detección de hardware, modo automático, argumentos del motor por modo y arranque serializado.
 - `scripts/merge-lora.mjs` + `scripts/gguf.mjs`: creación del modelo optimizado (LoRA fusionado).
-- `scripts/install.ps1`, `start.ps1`, `stop.ps1`, `common.ps1`: instalación y ciclo de vida en Windows.
+- `scripts/install.ps1`, `start.ps1`, `stop.ps1`, `uninstall.ps1`, `common.ps1`: instalación y ciclo de vida en Windows.
 
 ## Rendimiento
 

@@ -26,8 +26,8 @@ function refreshForm() {
   $('#canvasSize').textContent = `${s.width} × ${s.height}`; $('#megapixels').textContent = `${(s.width*s.height/1e6).toFixed(2)} MP`;
   document.querySelectorAll('.preset').forEach(b => b.classList.toggle('active', +b.dataset.w === s.width && +b.dataset.h === s.height));
   $('#stepsHint').textContent = s.steps === 6 ? '6 pasos · configuración recomendada para Viggle v0.2.1.' : 'Modo experimental: usa 6 pasos para v0.2.1. Se conservan los nodos de entrenamiento al añadir pasos; menos de 4 no está recomendado.';
-  $('#generate').disabled = !!state.job || !state.ready || state.modelsBusy;
-  $('#generate').title = state.modelsBusy ? 'Espera a que terminen las descargas y la recarga de modelos.' : '';
+  $('#generate').disabled = !!state.job || !state.ready || state.modelsBusy || state.loading;
+  $('#generate').title = state.modelsBusy ? 'Espera a que terminen las descargas y la recarga de modelos.' : state.loading ? 'Espera a que el motor termine de cargar los modelos.' : '';
   syncStatusActivity();
   $('#compute').disabled=!!state.job;$('#fastAttention').disabled=!!state.job;
   $('#computeHint').textContent={auto:'Automático usa GPU con una tarjeta dedicada, CPU + GPU con una GPU integrada y CPU si no hay GPU compatible.',cpu:'Todo el cálculo se realiza en CPU. Puede tardar varios minutos o más. Empieza con 512 × 512 y 6 pasos. 0 hilos = automático.',gpu:'Todo el cálculo se realiza en la GPU. Los pesos esperan en RAM y cada modelo pasa a la VRAM cuando se necesita.',hybrid:'La CPU interpreta el texto y las referencias; la GPU genera y decodifica la imagen. Para GPU integrada o con poca VRAM; con una GPU dedicada de 8 GB, GPU es algo más rápido.'}[$('#compute').value]+' Al cambiar el modo, los modelos se cargan de nuevo en segundo plano.';
@@ -135,9 +135,9 @@ async function followJob(id) {
   catch(e){state.job=null;$('#working').hidden=true;notice(`No se pudo consultar la generación: ${e.message}. Reconectando al motor…`,true);}
   finally{state.polling=false;refreshForm();}
 }
-$('#form').onsubmit=async e=>{e.preventDefault();if(state.job||state.modelsBusy)return;$('#generate').disabled=true;$('#notice').hidden=true;try{const job=await api('/api/jobs',{method:'POST',body:JSON.stringify({...settings(),refs:state.refs})});showJob(job);void followJob(job.id);}catch(e){notice(e.message,true);refreshForm();}};
+$('#form').onsubmit=async e=>{e.preventDefault();if(state.job||state.modelsBusy||state.loading){refreshForm();return;}$('#generate').disabled=true;$('#notice').hidden=true;try{const job=await api('/api/jobs',{method:'POST',body:JSON.stringify({...settings(),refs:state.refs})});showJob(job);void followJob(job.id);}catch(e){notice(e.message,true);refreshForm();}};
 $('#cancel').onclick=async()=>{if(!state.job)return;try{const job=await api(`/api/jobs/${state.job.id}/cancel`,{method:'POST',body:'{}'});showJob(job);}catch(e){notice(e.message,true);}};
-document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();if(state.ready&&!state.job&&!state.modelsBusy)$('#form').requestSubmit();}});
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();if(state.ready&&!state.job&&!state.modelsBusy&&!state.loading)$('#form').requestSubmit();}});
 async function status() {let loading=false;try{const s=await api('/api/status');state.ready=s.ready;state.modelsBusy=!!s.modelsBusy;loading=!!s.compute?.loading;state.loading=loading;
 if(s.compute?.hardware){const h=s.compute.hardware,first=!state.hardware;state.hardware=h;$('#hardwareInfo').textContent=h.cpuName+' · '+h.logicalCores+' hilos · '+h.ramGB+' GB RAM. '+(h.gpus.length?'GPU: '+h.gpus.map(g=>g.name+(g.integrated?' (integrada)':'')).join(', '):'Sin GPU compatible detectada. Puedes generar con CPU.');for(const o of $('#compute').options)o.disabled=!h.modes.includes(o.value);
 $('#fastAttention').closest('label').hidden=!h.gpus.some(g=>/^cuda/i.test(g.id));

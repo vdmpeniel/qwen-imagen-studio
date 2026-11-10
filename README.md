@@ -135,7 +135,7 @@ Los registros están en la carpeta `logs/` (`engine.err.log`, `engine.out.log`, 
 ## Actualizar o desinstalar
 
 - **Actualizar:** descarga la nueva versión encima de la carpeta (o `git pull`) y ejecuta de nuevo el instalador; solo descarga lo que haya cambiado.
-- **Desinstalar:** ejecuta `Detener Qwen Imagen Studio.cmd` y borra la carpeta. Guarda antes tus imágenes de `outputs/` si las quieres conservar. La app no escribe fuera de su carpeta (salvo el runtime de Visual C++, si lo instaló).
+- **Desinstalar:** ejecuta `Desinstalar Qwen Imagen Studio.cmd`. Detiene la app y borra los motores, los modelos descargados, Node.js portable, los registros y las descargas temporales; antes te pide confirmación. Conserva tus imágenes de `outputs/` y el código de la app. Si quieres borrarlo todo, elimina la carpeta después. La app no escribe fuera de su carpeta (salvo el runtime de Visual C++, si lo instaló).
 
 ## Estructura del proyecto
 
@@ -146,7 +146,7 @@ docs/                 Documentación técnica y capturas
 qa/optimizacion/      Mediciones usadas para elegir la configuración del motor
 models/               Licencia y aviso de los modelos (los pesos los descarga el instalador)
 model-config.json     Versiones, revisiones y hashes fijados de los modelos
-*.cmd                 Instalar, iniciar y detener con doble clic
+*.cmd                 Instalar, iniciar, detener y desinstalar con doble clic
 ```
 
 Carpetas creadas por el instalador y la app (no forman parte del repositorio): `models/` (pesos), `runtime-*` (motores), `node/`, `outputs/`, `logs/` y `.downloads/`.
