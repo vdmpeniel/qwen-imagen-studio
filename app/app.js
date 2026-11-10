@@ -168,46 +168,50 @@ try{if(localStorage.getItem('turbo.modelVersion')!=='0.2.1'){$('#steps').value=6
 refreshForm();loadGallery().catch(e=>notice(e.message,true));status();
 
 /* ---------------- Model manager ---------------- */
-const models={open:false,data:null,draft:null,dirty:false,applying:false,confirm:null,hadPending:false,timer:null};
+const models={open:false,data:null,applying:false,confirm:null,hadPending:false,timer:null};
 const sizeLabel=bytes=>bytes==null?'—':bytes>=1024**3?(bytes/1024**3).toFixed(2)+' GB':Math.max(1,Math.round(bytes/1024**2))+' MB';
 const downloadStateLabel={queued:'En cola',downloading:'Descargando',verifying:'Verificando',converting:'Convirtiendo LoRA',done:'Instalado',cancelled:'Cancelada',error:'Error'};
 function modelMessage(text,error=false){const box=$('#modelsNotice');box.hidden=!text;box.textContent=text||'';box.classList.toggle('error',!!error);}
 function modelBadge(text,kind=''){const span=document.createElement('span');span.className='model-badge'+(kind?' '+kind:'');span.textContent=text;return span;}
-function draftItem(role){return models.data&&models.draft?models.data.items.find(item=>item.id===models.draft[role])||null:null;}
-function draftRequired(){
-  if(!models.draft)return [];
-  return [draftItem('textEncoder'),draftItem('mmproj'),draftItem('vae'),draftItem('diffusion')].filter(Boolean).concat(draftItem('diffusion')?.kind==='merged'?[]:[draftItem('lora')].filter(Boolean));
+function activeItem(role){return models.data?models.data.items.find(item=>item.role===role&&item.active)||null:null;}
+function selectionItems(selection){
+  if(!models.data||!selection)return [];
+  const byId=new Map(models.data.items.map(item=>[item.id,item]));
+  const required=[selection.textEncoder,selection.mmproj,selection.vae,selection.diffusion].map(id=>byId.get(id)).filter(Boolean);
+  const diffusion=byId.get(selection.diffusion);
+  if(!diffusion||diffusion.kind!=='merged'){
+    const lora=byId.get(selection.lora);if(lora)required.push(lora);
+  }
+  return required;
 }
 function modelActionButton(label,variant,onclick,disabled=false){const b=document.createElement('button');b.type='button';b.className=variant;b.textContent=label;b.disabled=disabled;b.onclick=onclick;return b;}
 function renderModels(){
   const data=models.data,body=$('#modelsBody');if(!data)return;
   body.replaceChildren();
-  const pending=!!data.pending,locked=models.applying||(pending&&!!data.downloading);
   for(const role of data.roles){
     const group=document.createElement('section');group.className='models-group';
     const head=document.createElement('div');head.className='models-group-head';
     const title=document.createElement('h3');title.textContent=role.label;
     const hint=document.createElement('p');hint.className='hint';hint.textContent=role.hint;
     head.append(title,hint);group.append(head);
-    if(role.id==='lora'&&draftItem('diffusion')?.kind==='merged'){
-      const note=document.createElement('p');note.className='models-note';note.textContent='El modelo de difusión elegido ya lleva el LoRA fusionado, así que esta pieza no se aplica.';group.append(note);
+    if(role.id==='lora'&&activeItem('diffusion')?.kind==='merged'){
+      const note=document.createElement('p');note.className='models-note';note.textContent='El modelo de difusión activo ya lleva el LoRA fusionado, así que esta pieza no se aplica.';group.append(note);
     }
-    for(const item of data.items.filter(entry=>entry.role===role.id))group.append(modelRow(item,role,locked));
+    for(const item of data.items.filter(entry=>entry.role===role.id))group.append(modelRow(item,role));
     body.append(group);
   }
   renderModelsFooter();
 }
-function modelRow(item,role,locked){
-  const chosen=models.draft?.[role.id]===item.id,state=item.state;
-  const row=document.createElement('div');row.className='model-row'+(chosen?' chosen':'')+(item.installed?'':' missing')+(item.active?' is-active':'');
-  const radio=document.createElement('input');radio.type='radio';radio.className='model-radio';radio.name='model-'+role.id;radio.value=item.id;radio.checked=chosen;
-  radio.setAttribute('aria-label','Usar '+item.label);
-  radio.disabled=locked||!models.draft||(!item.installed&&!item.downloadable)||(role.id==='lora'&&draftItem('diffusion')?.kind==='merged');
-  radio.onchange=()=>{if(!models.draft)return;models.draft[role.id]=item.id;models.dirty=true;models.confirm=null;renderModels();};
+function modelRow(item,role){
+  const data=models.data,state=item.state;
+  const busy=models.applying||!!data.jobActive||!!data.downloading;
+  const loraBlocked=role.id==='lora'&&activeItem('diffusion')?.kind==='merged';
+  const row=document.createElement('div');row.className='model-row'+(item.installed?'':' missing')+(item.active?' is-active':'');
   const info=document.createElement('div');info.className='model-info';
   const name=document.createElement('div');name.className='model-name';const strong=document.createElement('strong');strong.textContent=item.label;name.append(strong);
   if(item.active)name.append(modelBadge('Activa','active'));
-  if(item.installed)name.append(modelBadge('Instalada'));
+  if(data.pending?.[role.id]===item.id)name.append(modelBadge('Pendiente','pending'));
+  if(item.installed&&!item.active)name.append(modelBadge('Instalada'));
   if(item.local)name.append(modelBadge('Local'));
   if(!item.installed&&!item.downloadable)name.append(modelBadge('No descargable','warn'));
   const detail=document.createElement('small');detail.textContent=item.detail;info.append(name,detail);
@@ -229,35 +233,36 @@ function modelRow(item,role,locked){
     actions.append(modelActionButton('Cancelar descarga','secondary',()=>cancelModel(item)));
   }else if(state&&['verifying','converting'].includes(state.state)){
     actions.append(modelActionButton('Verificando…','secondary',()=>{},true));
+  }else if(item.active&&item.installed){
+    // The active variant is shown by its badge and offers no actions.
   }else if(!item.installed&&item.downloadable){
     actions.append(modelActionButton('Descargar','secondary',()=>downloadModel(item),!item.canDownload));
   }else if(item.installed){
-    const button=modelActionButton('Borrar','secondary danger',()=>{models.confirm=item.id;renderModels();},!item.canDelete);
-    if(item.deleteBlock)button.title=item.deleteBlock;
-    actions.append(button);
+    const activate=modelActionButton('Activar','secondary',()=>activateModel(item),busy||loraBlocked);
+    if(loraBlocked)activate.title='El modelo de difusión activo ya lleva el LoRA fusionado.';
+    else if(busy)activate.title='Espera a que terminen la operación en curso.';
+    const remove=modelActionButton('Borrar','secondary danger',()=>{models.confirm=item.id;renderModels();},busy||!item.canDelete);
+    if(item.deleteBlock)remove.title=item.deleteBlock;
+    actions.append(activate,remove);
   }
-  row.append(radio,info,size,actions);return row;
+  row.append(info,size,actions);return row;
 }
 function renderModelsFooter(){
   const data=models.data;if(!data)return;
-  const required=draftRequired(),missing=required.filter(item=>!item.installed);
-  const total=required.reduce((sum,item)=>sum+item.bytes,0),missingBytes=missing.reduce((sum,item)=>sum+item.bytes,0);
+  const selection=data.pending||data.selection,required=selectionItems(selection);
+  const missing=required.filter(item=>!item.installed);
+  const total=required.reduce((sum,item)=>sum+(item.bytes||0),0),missingBytes=missing.reduce((sum,item)=>sum+(item.bytes||0),0);
   const disk=data.disk?` · ${sizeLabel(data.disk.freeBytes)} libres en disco`:'';
   $('#modelsDisk').textContent=data.ramGB?`${data.ramGB} GB de RAM${disk}`:disk.replace(/^ · /,'');
-  $('#modelsSummary').textContent=`Configuración: ${sizeLabel(total)}${missing.length?` · ${missing.length} archivo(s) por descargar (${sizeLabel(missingBytes)})`:' · todo instalado'}${disk}`;
-  const apply=$('#modelsApply'),blocked=!!data.jobActive||!!data.downloading;
-  apply.textContent=missing.length?`Descargar y aplicar (${sizeLabel(missingBytes)})`:'Aplicar cambios';
-  apply.disabled=!models.draft||models.applying||(!models.dirty&&!data.pending)||blocked;
-  apply.classList.toggle('busy',models.applying);
-  $('#modelsCancel').textContent=models.dirty?'Descartar cambios':'Cerrar';
+  $('#modelsSummary').textContent=`${data.pending?'Configuración pendiente':'Configuración activa'}: ${sizeLabel(total)}${missing.length?` · ${missing.length} archivo(s) por descargar (${sizeLabel(missingBytes)})`:' · todo instalado'}${disk}`;
+  $('#modelsCancel').textContent='Cerrar';
 }
 async function refreshModels(){
   try{
     const data=await api('/api/models');models.data=data;if(!models.applying){state.modelsBusy=!!(data.downloading||data.pending);refreshForm();}
-    if(!models.dirty&&!models.applying)models.draft=data.pending?{...data.pending}:{...data.selection};
     if(data.pending)models.hadPending=true;
     else if(models.hadPending){
-      models.hadPending=false;models.dirty=false;models.draft={...data.selection};
+      models.hadPending=false;
       if(models.open)modelMessage('Modelos verificados. La nueva configuración está activa y el motor se ha recargado.');
       warmedKey=null;
     }
@@ -275,7 +280,7 @@ function scheduleModelPoll(delay=1500){
 }
 async function openModels(){
   if(models.open)return;
-  models.open=true;models.dirty=false;models.confirm=null;models.hadPending=false;modelMessage('');
+  models.open=true;models.confirm=null;models.hadPending=false;modelMessage('');
   const dialog=$('#modelsDialog');
   if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','');
   $('#modelsBody').replaceChildren(Object.assign(document.createElement('p'),{className:'hint',textContent:'Cargando el catálogo de modelos…'}));
@@ -284,7 +289,7 @@ async function openModels(){
 }
 function closeModels(){
   if(models.applying)return;
-  models.open=false;clearTimeout(models.timer);models.dirty=false;models.confirm=null;
+  models.open=false;clearTimeout(models.timer);models.confirm=null;
   const dialog=$('#modelsDialog');
   if(dialog.open)dialog.close();else dialog.removeAttribute('open');
 }
@@ -299,35 +304,31 @@ async function cancelModel(item){
 async function deleteModel(item){
   try{
     await api('/api/models/delete',{method:'POST',body:JSON.stringify({id:item.id})});models.confirm=null;modelMessage(`${item.short} se borró del disco.`);await refreshModels();
-    if(models.draft&&models.draft[item.role]===item.id){
-      models.draft[item.role]=models.data?.selection?.[item.role]||'';models.dirty=true;
-      if(models.open)renderModels();
-    }
   }
   catch(error){modelMessage(error.message,true);}
 }
-async function applyModels(){
-  if(!models.draft||models.applying)return;
-  models.applying=true;models.confirm=null;modelMessage('Comprobando la configuración…');renderModels();
+async function activateModel(item){
+  if(!models.data||models.applying)return;
+  models.applying=true;models.confirm=null;modelMessage(`Activando ${item.short}…`);renderModels();
   try{
-    const result=await api('/api/models/select',{method:'POST',body:JSON.stringify({selection:models.draft})});
+    const selection={...models.data.selection,[item.role]:item.id};
+    const result=await api('/api/models/select',{method:'POST',body:JSON.stringify({selection})});
     if(result.pending){
-      models.dirty=false;models.hadPending=true;state.modelsBusy=true;refreshForm();
-      modelMessage(`Descargando ${result.downloads.length} archivo(s). Se aplicará automáticamente cuando todos verifiquen; puedes cerrar esta ventana.`);
+      models.hadPending=true;state.modelsBusy=true;refreshForm();
+      modelMessage(`Faltan ${result.downloads.length} archivo(s). ${item.short} se activará automáticamente cuando terminen las descargas.`);
     }else{
-      models.dirty=false;models.draft={...result.selection};warmedKey=null;
-      modelMessage(result.restarted?'Configuración aplicada. El motor se está recargando con los nuevos modelos.':'Configuración aplicada.');
+      warmedKey=null;
+      modelMessage(result.restarted?`${item.short} activado. El motor se está recargando.`:`${item.short} activado.`);
       if(result.restarted){state.modelsBusy=true;refreshForm();}else warmEngine();
-      await refreshModels();
     }
+    await refreshModels();
   }catch(error){modelMessage(error.message,true);}
   finally{models.applying=false;renderModels();scheduleModelPoll(800);}
 }
 $('#models').onclick=openModels;
 $('#modelsClose').onclick=closeModels;
 $('#modelsCancel').onclick=closeModels;
-$('#modelsApply').onclick=applyModels;
-$('#modelsDialog').addEventListener('close',()=>{models.open=false;clearTimeout(models.timer);models.dirty=false;models.confirm=null;});
+$('#modelsDialog').addEventListener('close',()=>{models.open=false;clearTimeout(models.timer);models.confirm=null;});
 $('#modelsDialog').addEventListener('cancel',event=>{if(models.applying)event.preventDefault();});
 $('#modelsDialog').addEventListener('click',event=>{if(event.target===$('#modelsDialog'))closeModels();});
 

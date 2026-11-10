@@ -67,9 +67,11 @@ function modelItem(item) {
 async function modelsPayload() {
   const selection = readSelection(), pending = readPending(), disk = await diskInfo();
   const busylock = !!active || deleting;
+  const mergedActive = getItem(selection.diffusion)?.kind === 'merged';
   const items = CATALOG.items.map(item => {
     const installed = isInstalled(item);
-    const isActive = selection[item.role] === item.id;
+    // A LoRA is not in use while the active diffusion already carries it.
+    const isActive = selection[item.role] === item.id && !(item.role === 'lora' && mergedActive);
     const deleteBlock = !installed ? null
       : busylock ? 'Espera a que termine la generación en curso.'
       : downloader.busy ? 'Espera a que terminen las descargas en curso.'
@@ -254,7 +256,8 @@ const server = createServer(async (req,res) => {
       if (active || deleting) return json(res,409,{error:'Espera a que termine la generación en curso.'});
       if (downloader.busy) return json(res,409,{error:'Espera a que terminen las descargas antes de borrar modelos.'});
       const body = await readBody(req), item = getItem(body?.id), selection = readSelection();
-      if (selection[item.role] === item.id) return json(res,409,{error:'Ese modelo está activo. Activa otro de la misma pieza antes de borrarlo.'});
+      const loraNotUsed = item.role === 'lora' && getItem(selection.diffusion)?.kind === 'merged';
+      if (selection[item.role] === item.id && !loraNotUsed) return json(res,409,{error:'Ese modelo está activo. Activa otro de la misma pieza antes de borrarlo.'});
       if (isInstalled(item) && installedCount(item.role) <= 1) return json(res,409,{error:'No puedes borrar la última opción instalada de esta pieza.'});
       const files = await deleteItemFiles(item);
       return json(res,200,{ deleted:true, id:item.id, files });
